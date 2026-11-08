@@ -1,0 +1,7 @@
+# Build-time table for the pocket-shell dual-boot slot: the app links at the
+# offset it occupies in the runtime table (utils/dualboot/partitions-dual.csv:
+# ota_2 @ 0x610000). Offsets/sizes of everything else match the runtime table.
+# Name,   Type, SubType,  Offset,   Size,     Flags
+nvs,      data, nvs,      0x9000,   0x4000,
+otadata,  data, ota,      0xd000,   0x2000,
+pocket,   app,  factory,  0x610000, 0x300000,

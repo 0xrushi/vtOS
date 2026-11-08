@@ -21,6 +21,7 @@ defaults.apply()
 hardware.init_board()
 hardware.init_spi(env)
 tft = hardware.init_tft(env)
+env.tft = tft   # apps that draw directly (yt) use this; set env.sd_busy to pause the terminal
 kbd = hardware.init_keyboard()
 
 # Initialize ST engine
@@ -43,9 +44,14 @@ sys.stdout.write("\x1b[38;5;210m")
 env.sts = statusbar.StatusBar(env)
 env.sts.refresh()
 
+import quickpanel
+quickpanel.install(env, tft)
+
 # The FAST loop (30ms)
 def scheduled_fast(_):
     trackball.poll(env)
+    if env.quickpanel is not None:
+        env.quickpanel.poll()
 
     # Skip this tick's redraw rather than racing an in-flight SD transfer
     # that has the shared SPI bus temporarily parked at SD_BAUDRATE.

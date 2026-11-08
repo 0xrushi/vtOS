@@ -121,3 +121,198 @@ contains all of those changes natively, so the overrides must not come back.
 - [ ] If anything above misbehaves, check `git status` on the firmware source:
       the build only includes what is committed or present in the working tree
       when `make build` ran.
+
+## Pocket Shell as a third dual-boot slot -- SHELVED (2026-11-08)
+
+**Decision 2026-11-08: do not work on any PocketJS / Pocket Shell item below
+until the user asks again.** State when shelved: the launcher, Notes and the
+Wi-Fi/HTTP worker firmware all build and were flashed (image 2,854,992 B in the
+3 MB `pocket` slot, 9% free); Wi-Fi and Hacker News were never tested on the
+device (the SD card still held older packages). Everything is kept in
+`utils/pocket/` as-is. The `pocket` slot at 0x610000 is being reused for the
+agent (see "Minimal agent UI in C").
+
+
+Goal: a third payload next to vtOS and iqlab: pocket-nexus/pocket-shell, a
+touch launcher for PocketJS applets (QuickJS guest + Rust core, GPL-3.0
+launcher, MIT runtime). Research 2026-11-08 (clones were read, nothing built
+until the spike below):
+
+- PocketJS lists ESP32-S3 as supported (software RGB565 renderer, SPI display
+  via `pocket_display_esp_lcd`, touch via `pocket_input_touch`, buttons via
+  `pocket_input_gpio`). Only the Tab5 (ESP32-P4) has a board program
+  (`pocket-m5`); no T-Deck program exists.
+- S3 needs the Xtensa Rust fork (pinned `1.97.0-nightly`, commit 8ea53bc in
+  `tools/build/toolchains/esp-idf/compiler-pins.json`, built with
+  `-Zbuild-std=core,alloc`) and ESP-IDF 6.0/6.1/6.2 (vtOS/loader use 5.5.1;
+  payloads are separate images so mixed IDF versions are fine).
+- Applets are installed from a paired Mac app (Pocket Hub, unreleased, or
+  Pocket Companion). Without it the launcher lists only embedded apps.
+
+Partition plan (keeps `/flash` at 0x920000 untouched): shrink iqlab from 4 MB
+to 1 MB (image is about 0.7 MB) and use the freed space at 0x610000 for
+`pocket` as ota_2, 3 MB. Loader menu gets a third entry.
+
+- [x] Phase 1 (2026-11-08): 3-slot table (`utils/dualboot/partitions-dual.csv`, loader copy,
+      `boards/LILYGO_T_DECK/partitions.csv` unaffected) and loader menu with
+      BOOT cycling vtOS -> iq lab -> pocket shell, serial keys 1/2/3.
+- [~] Phase 1b: partition table + 3-slot loader flashed and hashes verified 2026-11-08 (BOOT cycling skips empty slots; empty slot falls back to vtOS). Still to look at on the screen: vtOS and `/flash` must keep
+      working (verify), iqlab still boots from its new 1 MB slot.
+- [x] Phase 2a (2026-11-08): Xtensa toolchain via espup 0.17.1 (aarch64 Linux
+      Docker, `utils/pocket/xtensa-runtime-spike.sh`) builds the PocketJS runtime
+      archive for esp32s3: `libpocket_idf_runtime.a` = 3,761,500 B (static
+      archive, not the linked size). Compiler reports 1.97.0-nightly commit
+      c980f48, but `compiler-pins.json` pins 8ea53bc, so their receipt check
+      (`verifyNativeCompiler`) would reject it: the espup branch has moved.
+- [x] Phase 2b (2026-11-08): PocketJS `tests/esp-idf/examples/prebuilt` linked for
+      esp32s3 on ESP-IDF 6.0.1 (Docker `espressif/idf:v6.0.1`, Xtensa Rust from
+      phase 2a, Bun 1.4.2 for the pocket CLI; `utils/pocket/build-s3-example.sh`).
+      Image = 1,552,240 B (0x17af70) with a 246 KB package: fits the 3 MB slot
+      with about 1.4 MB spare. Flash code 1.08 MB, rodata 0.41 MB; static RAM
+      only about 50 KB DIRAM (the runtime heap goes to PSRAM, example sets
+      CONFIG_SPIRAM_USE_MALLOC). One example fix was needed: the example
+      main.c missed the new `flags` field (-Werror). Not yet flashed or run;
+      still lacks display, input, Wi-Fi and the real launcher package, so
+      expect the final image to be larger than this.
+- [x] Phase 3 (2026-11-08, blue card confirmed on screen): T-Deck program `utils/pocket/tdeck/` (build with
+      `build.sh`, needs POCKETJS_SRC + RUST_HOME). ESP-IDF 6.0.1, 1,620,720 B
+      (0x18baf0, 48% of the slot free). GPIO10 power, ST7789 via esp_lcd
+      (`esp_lcd_new_panel_st7789`, SPI2 40 MHz, byte-swapped RGB565), keyboard
+      I2C 0x55 + BOOT mapped to buttons (w/a/s/d or i/j/k/l = d-pad, Enter =
+      cross, Backspace = circle, Space = start, BOOT = select), PocketJS smoke
+      applet embedded. Flashed at 0x610000 and booted from the loader (serial
+      key `3`): runs about 60 fps, 0 skipped/errored frames over 30 s.
+      Fixes needed on the way: `main/idf_component.yml` override_path for
+      pocket-nexus/pocket_runtime; the guest runs on the calling task, so the
+      app now runs on a 384 KB PSRAM task stack (32 KB main stack overflowed).
+      Input is wired but untested: the smoke applet ignores buttons.
+- [x] Phase 4 (2026-11-08): the real Pocket Shell launcher runs on the T-Deck; home screen and touch confirmed by eye.
+      `utils/pocket/tdeck-shell/compile.sh` compiles `shells/3ds/shell` in
+      Docker (never install untrusted deps on the host) against the T-Deck
+      host contract `utils/pocket/tdeck/pocket.host.json` (id tdeck-home:
+      400x240 primary kept off screen + 320x240 auxiliary = the panel;
+      capabilities input.buttons, input.touch.auxiliary, display.auxiliary,
+      text.glyphs.baked). Package 1,642,056 B; image 3,020,960 B, only 4%
+      (125 KB) free in the 3 MB slot, so there is no room for embedded applets
+      without growing the slot. Firmware: off-screen primary display (PSRAM)
+      + panel as AUXILIARY role, GT911 touch (I2C 0x5D, shared bus with the
+      keyboard) as contacts. On device: boots in about 5 s, 30 fps, 0
+      errors, 4.7 MB PSRAM and 361 KB internal RAM free. The CPU1 idle
+      watchdog fired during boot (added CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n,
+      not rebuilt yet). Touch reported working with the default mapping
+      (TOUCH_SWAP=1, no flips) although two serial captures logged no
+      `touch raw` lines, so touch logging was not independently confirmed.
+      Keyboard buttons still untested.
+- [~] Phase 5 (2026-11-08): applet install path. Findings so far:
+      * Applets compile for the T-Deck host contract: Notes built against
+        tdeck-home + `data.fs` is admitted (`applet: rules pass`), 627,944 B.
+        Needs: Notes = data.fs; Hacker News = net.http (Wi-Fi + worker);
+        Camera/Photos = camera.photo (no T-Deck camera). Notes is the first
+        feasible applet.
+      * The Tab5 firmware's `pocket_system` component
+        (pocket-m5/programs/m5stack-tab5/components/pocket_system, MIT, about
+        3,400 lines) holds the app store, launch/switch, data.fs, Wi-Fi/SNTP,
+        Pocket Link and URL/QR installs. It is P4-only (esp_wifi_remote,
+        REQUIRED_IDF_TARGETS esp32p4, shared sources from
+        third_party/pocketjs/engine/host-services). Packages may be kept as
+        files under the store root (`packages_partition = NULL`).
+      * The firmware also needs the Tab5's app loop (take_switch, rebuild the
+        runtime per app) and an op provider for appTable/appLaunch.
+      * Size problem: the image is 3,020,960 B of 3,145,728 B. pocket_system
+        will not fit the 3 MB slot. Options: (a) move the launcher package
+        (1.64 MB) to the SD card and load it at boot; (b) grow the slot by
+        shrinking vfs, which reformats vtOS `/flash` (back up first).
+      Plan: port pocket_system to S3 with Wi-Fi off, store on an SD card
+      (esp_vfs_fat sdspi on the shared SPI2 bus, CS 39), add the app loop and
+      ops, then drop `notes.pocket` on the card and launch it from the home
+      screen. Later: Wi-Fi + net.http worker for Hacker News.
+
+## Minimal agent as a vtOS app (2026-11-08, supersedes the standalone C agent)
+
+**Decision 2026-11-08:** the agent is a normal vtOS app, `modules/scripts/bin/agent.py`
+(shell command `agent`), not a separate firmware slot. It reuses vtOS Wi-Fi,
+keyboard, filesystem and `requests`. Verified: 28 host tests (fake model
+server, `utils/tests/test_agent.py`) and a run on the device under MicroPython
+(tools, SSE streaming parser, tool loop; app heap about 11 KB after import).
+NOT yet verified against a real model API. Settings in `/flash/.agent`
+(`agent set api_key ...`), files in `/flash/agent`. Until the firmware is
+rebuilt, run it from the MicroPython prompt: `exit`, then
+`import agentapp; agentapp.main(env, [])` (file copied to `/flash/agentapp.py`).
+Still open: AssemblyAI voice (record with `env.rec`, upload + transcribe over
+the REST API), freeze into a firmware build, real-API test, `/mem` style RAM
+number on a live request. The standalone C version in `utils/agent/` is kept
+only as a reference; the loader's third slot "agent" and the `agentfs`
+partition are now unused.
+
+### (older notes) Minimal agent UI in C, standalone slot
+
+Goal: an opencode / Claude Code style terminal agent on the T-Deck, in C, small:
+- UI: text console on the ST7789, keyboard in, trackball scroll.
+- Brain: any OpenAI-compatible `/chat/completions` endpoint (base URL, key and
+  model from a config file; streaming responses).
+- Tools (pi-style minimal: tiny system prompt, flat tool set, plain loop, no
+  planning/sub-agents): `list_files`, `read_file`, `grep_file` (case-insensitive,
+  one file or all), `write_file`, sandboxed to one folder on the SD card. No
+  shell, no network tools, no deletes.
+- Voice: push-to-talk, AssemblyAI streaming speech-to-text with the user's API
+  key; the transcript goes into the input line (editable) before sending.
+- Memory budget: **under 200 KB of RAM** for the agent. Assumed meaning (user
+  to confirm): the agent's own static + heap peak, internal SRAM and PSRAM
+  together, measured with `heap_caps` at the busiest moment (a TLS reply with a
+  tool call), and also report the whole-system number including the Wi-Fi
+  driver, which cannot be shrunk. Hard rule: no full-screen framebuffer (320x240
+  RGB565 is 150 KB by itself); draw text straight to the panel in small strips.
+
+Design decisions:
+- Slot: reuse the `pocket` partition (ota_2 @ 0x610000, 3 MB), rename the loader
+  entry to "agent". Plain ESP-IDF 5.5.1 app in `utils/agent/` (same toolchain as
+  the loader and iqlab), linked for 0x610000 with a build-time partition table.
+- **No SD card (user decision 2026-11-08).** Config and notes live in a new
+  internal SPIFFS partition `agentfs` (0x790000, 1.5 MB, carved from the agent
+  slot, which is now 1.5 MB at 0x610000; `/flash` and the other slots are
+  untouched). Config is set from the T-Deck keyboard with `/set KEY VALUE`
+  (`wifi_ssid`, `wifi_pass`, `api_base`, `api_key`, `model`, `assemblyai_key`),
+  shown masked by `/config`, never in the repo or chat. Needs the new partition
+  table flashed once (0x8000).
+- Sandbox: tools only touch the flat `/data/` partition; reject `..`, absolute paths and
+  names longer than 31 bytes (SPIFFS); `write_file` asks for confirmation on the screen
+  (path + byte count) before writing; file size cap about 8 KB per call.
+- JSON: tiny hand-written writer and streaming scanner, no cJSON; history kept
+  in a ring of about 12 KB and trimmed oldest-first; tool loop capped at 8 steps.
+- Network: Wi-Fi station, SNTP for TLS dates, `esp_http_client` or raw mbedtls
+  for streaming POST; TLS buffers in PSRAM (counted in the budget). One TLS
+  session at a time: close the voice WebSocket before the chat request.
+- Voice path: ES7210 codec (I2C 0x40) + I2S RX at 16 kHz mono, as in
+  `modules/tdeck_i2s/audiorecorder.c` (I2C SDA 18/SCL 8, I2S MCLK 48, LRCK 21,
+  SCK 47, DIN 14). Stream 50 ms PCM frames to
+  `wss://streaming.assemblyai.com/v3/ws?sample_rate=16000&encoding=pcm_s16le`
+  (`Authorization` header); read `Turn` messages for the transcript. No audio is
+  ever buffered whole (5 s would be 160 KB).
+
+Phases:
+- [x] A0 (code, built 2026-11-08): loader menu entry "pocket shell" -> "agent"; `utils/agent/` skeleton,
+      build-time partition table, flash script; boots to a blank console.
+- [x] A1 (code, built, not yet run on the device): text console (8x8 font straight to the panel, no framebuffer),
+      keyboard line editor, trackball scroll, SD mount, `read_file` /
+      `write_file` tools with the sandbox, tried through `/read` and `/write`
+      slash commands (no network yet). Measure RAM.
+- [~] A2 (code written and built 2026-11-08, untested): config file, Wi-Fi + SNTP, streaming chat completion (text only),
+      render tokens as they arrive. Measure RAM at the busiest moment.
+- [~] A3 (code written and built 2026-11-08, untested): tool calling loop (streamed tool-call deltas, confirm on write).
+- [ ] A4: AssemblyAI push-to-talk (ES7210 + I2S + WebSocket), transcript into
+      the input line.
+- [ ] A5: RAM audit against the 200 KB budget; trim; history/scroll polish;
+      README for the agent.
+
+## YouTube via SSH server (`yt`, 2026-11-08)
+
+- [x] Server `tools/ytstream/ytstream.py`: yt-dlp -> ffmpeg -> 320x240 MJPEG +
+      MP3 packets on stdout; tested with a synthetic source and a real 720p file
+      (`utils/tests/test_ytproto.py`).
+- [x] Client `modules/scripts/bin/yt.py` + `lib/ytproto.py`; `env.tft` exposed
+      in `boot.py`/`env.py`; registered as shell `yt`. NOT run on a device yet.
+- [ ] Real YouTube from this Mac fails: yt-dlp gets 403 / "format not
+      available" for every client tried (yt-dlp 2026.03.17). Needs cookies or a
+      JS runtime on the server (`YTSTREAM_YTDLP_ARGS`). Not solved.
+- [ ] Rebuild vtOS firmware, add an SSH `Host yt` profile, test on the device:
+      JPEG draw speed (SLOW mode), audio underruns while decoding, pause.

@@ -34,6 +34,51 @@ The Plus connects its GPS to GPIO 43/44, which are also the default UART0 consol
 For an existing firmware release with this problem, add the contents of [`utils/tdeck_plus_uart_fix.py`](utils/tdeck_plus_uart_fix.py) to `/flash/main.py`, preserving any existing startup code, and restart. This startup workaround masks UART0 receive interrupts without reflashing the firmware. It is not needed after installing firmware built with the updated board definition.
 
 
+### Onboard microphone over SSH (experimental)
+
+The ES7210 microphone can stream 16 kHz, 16-bit mono PCM through a separate encrypted SSH exec session. The terminal stays interactive. This requires firmware with the recorder streaming API and a Linux SSH host running PipeWire/PulseAudio with `pactl` and `pacat` installed.
+
+Install the host helper once from your computer:
+
+```sh
+ssh user@host 'mkdir -p ~/.local/share/vtos'
+scp utils/tdeck_mic_bridge.py user@host:.local/share/vtos/
+```
+
+On vtOS, connect using `ssh --mic <profile>` or `ssh --mic <host> <port> <user> <password>`. The microphone streams while that SSH session is open; disconnecting stops capture and removes the temporary virtual audio devices on the host.
+
+Inside the remote shell, launch Claude with the forwarded microphone:
+
+```sh
+python3 ~/.local/share/vtos/tdeck_mic_bridge.py --claude -- --continue
+```
+
+This selects the virtual input for that Claude process and enables native `/voice tap` for the session. With an empty prompt, tap the T-Deck's microphone-icon key once to start dictation and again to stop. Ordinary Space works too. Claude voice requires a Claude.ai login. Its standard SSH setup does not forward audio; the helper supplies the remote input device without changing the host's default microphone.
+
+The recorder also supports `record(None)` followed by nonblocking `readinto()` for raw PCM; `record(path, seconds=N)` continues to produce WAV files. The 8 kHz profile used by Codec 2 is retained, while the SSH microphone uses 16 kHz. Codec and I2S MCLK ratios are kept consistent.
+
+### Touch quick settings
+
+Swipe down starting in the top 24 pixels to open quick settings. Swipe up,
+tap X, or tap the bottom handle to close. SSH output continues underneath.
+
+- **Wi-Fi:** enable and reconnect with remembered credentials, or disable.
+  Disabling a connected interface requires a second tap within four seconds.
+  Use `nm` to select a network when credentials are unavailable.
+- **BT:** toggle Bluetooth. Exit an active BLE mesh app before disabling it.
+- **GPS RX:** toggle the onboard NMEA reader, with fix/satellite status.
+  This controls reading GPS data, not power to the receiver.
+- **LoRa:** initialize or sleep the radio using the frequency saved by
+  `loracfg`. Exit a foreground radio app before disabling its radio.
+- Drag **Brightness** through the backlight's 16 lit levels, or **Volume**
+  from 0–100%. Volume also sets the default for future speaker playback.
+- Tap the notification line to browse the last five status notifications.
+  Notification history and slider positions are kept for the current boot.
+
+Touch is optional: a missing GT911 does not prevent keyboard use. The driver
+uses [LilyGO's landscape mapping](https://github.com/Xinyuan-LilyGO/T-Deck/blob/master/examples/UnitTest/UnitTest.ino)
+and does not rewrite the touchscreen configuration.
+
 ## ⚡ Quick Install (Pre-compiled Binaries)
 
 You can download and flash the latest pre-compiled firmware directly to your T-Deck.
@@ -292,3 +337,10 @@ This project's source code is licensed under the **MIT License**. However, if yo
 * **Scientifica Font:** Copyright (c) 2020 Akshay Oppiliappan <nerdy@peppe.rs>. Licensed under the [SIL Open Font License 1.1](https://scripts.sil.org/OFL).
 * **GNU Unifont:** Copyright Roman Czyborra, Paul Hardy, and contributors. Dual-licensed under the SIL Open Font License 1.1 and GNU GPL v2+ with the GNU Font Embedding Exception; used here under the [SIL Open Font License 1.1](https://scripts.sil.org/OFL).
 * **Siji Font:** (c) stark and contributors. Based on Stlarch, with glyphs drawn from FontAwesome and other icon packs. [GPLv2 License](https://github.com/stark/siji)
+
+## YouTube over SSH (`yt`)
+
+`yt <words or url>` plays YouTube on the T-Deck by letting an SSH server do
+the decoding: it streams 320x240 JPEG frames and MP3 audio, the T-Deck draws
+and plays them. Setup, protocol and limits are in
+[tools/ytstream/README.md](tools/ytstream/README.md).

@@ -68,6 +68,7 @@
 #include "es7210.h" // from the espressif/es7210 ESP-IDF component
 
 #include "ring_buf.h" // shared with audioplayer.c
+#include "pcm_capture.h"
 
 static const char *TAG = "audiorecorder";
 
@@ -145,6 +146,7 @@ typedef struct _audiorecorder_obj_t {
   // (record() / stop() / deinit() / the scheduled drain callback), never
   // from audio_record_task().
   mp_obj_t file_obj;
+  bool streaming; // raw PCM is read by Python instead of written to a WAV
   volatile bool drain_pending; // a drain callback is already scheduled
 
   ring_buf_t rb;
@@ -258,6 +260,9 @@ static MP_DEFINE_CONST_FUN_OBJ_1(audiorecorder_drain_scheduled_obj,
                                  audiorecorder_drain_scheduled);
 
 static void audiorecorder_request_drain(audiorecorder_obj_t *self) {
+  if (self->streaming) {
+    return;
+  }
   if (!self->drain_pending) {
     self->drain_pending = true;
     if (!mp_sched_schedule(MP_OBJ_FROM_PTR(&audiorecorder_drain_scheduled_obj),
@@ -282,6 +287,7 @@ static void audio_record_task(void *arg) {
     goto done;
   }
   size_t carry_len = 0; // 0-3 leftover bytes from a non-frame-aligned read
+  uint8_t carry[4];
 
   while (!self->stop_request) {
     // Same watchdog-safety guarantee as audioplayer.c's decode loop: never
@@ -292,6 +298,7 @@ static void audio_record_task(void *arg) {
     }
 
     size_t bytes_read = 0;
+    memcpy(chunk, carry, carry_len);
     esp_err_t err =
         i2s_channel_read(self->rx_handle, chunk + carry_len, RECORD_CHUNK_SIZE,
                          &bytes_read, pdMS_TO_TICKS(200));
@@ -326,27 +333,10 @@ static void audio_record_task(void *arg) {
     // to the front of the buffer instead of assuming chunk[0] always
     // lands on a left-channel sample boundary.
     size_t total = carry_len + bytes_read;
-    size_t usable = total - (total % 4);
-    carry_len = total - usable;
-    if (carry_len > 0) {
-      memmove(chunk, chunk + usable, carry_len);
-    }
-    bytes_read = usable;
+    bytes_read = vtos_capture_pack(chunk, total, carry, &carry_len,
+                                   self->channels == 1);
     if (bytes_read == 0) {
       continue; // nothing frame-aligned yet; wait for more data
-    }
-
-    // I2S RX always receives real stereo (see the comment in make_new());
-    // if the caller asked for a mono WAV, downmix here by keeping just
-    // the left slot of each interleaved L/R pair, in place. bytes_read
-    // is halved accordingly for everything below.
-    if (self->channels == 1) {
-      int16_t *stereo = (int16_t *)chunk;
-      size_t n_frames = bytes_read / (2 * sizeof(int16_t));
-      for (size_t i = 0; i < n_frames; i++) {
-        stereo[i] = stereo[i * 2];
-      }
-      bytes_read = n_frames * sizeof(int16_t);
     }
 
     // Cheap peak-level meter -- handy for a mic-level UI or a rough
@@ -357,7 +347,10 @@ static void audio_record_task(void *arg) {
     int16_t peak = 0;
     const int16_t *samples = (const int16_t *)chunk;
     for (size_t i = 0; i < bytes_read / sizeof(int16_t); i++) {
-      int16_t mag = samples[i] < 0 ? (int16_t)-samples[i] : samples[i];
+      int32_t mag = samples[i] < 0 ? -(int32_t)samples[i] : samples[i];
+      if (mag > INT16_MAX) {
+        mag = INT16_MAX;
+      }
       if (mag > peak) {
         peak = mag;
       }
@@ -418,6 +411,7 @@ done:
   ESP_LOGI(TAG, "capture task exiting (stop_request=%d, total_bytes=%u)",
            self->stop_request, (unsigned)self->total_bytes);
   self->recording = false;
+  self->rb.eof = true;
   xSemaphoreGive(self->done_sem);
   vTaskDelete(NULL);
 }
@@ -525,6 +519,7 @@ static mp_obj_t audiorecorder_make_new(const mp_obj_type_t *type, size_t n_args,
   self->i2s_error_count = 0;
   self->rb_full_stalls = 0;
   self->file_obj = mp_const_none;
+  self->streaming = false;
   self->drain_pending = false;
   self->i2s_installed = false;
   self->i2c_installed = false;
@@ -663,6 +658,10 @@ static mp_obj_t audiorecorder_make_new(const mp_obj_type_t *type, size_t n_args,
                     },
             },
     };
+    // The codec coefficient table and the physical MCLK must agree. In
+    // particular 8kHz/512 needs 4.096MHz, not the default 8kHz/256 clock.
+    std_cfg.clk_cfg.mclk_multiple =
+        (i2s_mclk_multiple_t)parsed[ARG_mclk_ratio].u_int;
     ret = i2s_channel_init_std_mode(self->rx_handle, &std_cfg);
   }
   if (ret == ESP_OK) {
@@ -694,7 +693,9 @@ static mp_obj_t audiorecorder_make_new(const mp_obj_type_t *type, size_t n_args,
   return MP_OBJ_FROM_PTR(self);
 }
 
-// record(path, seconds=None) -- seconds is an optional auto-stop limit;
+static void audiorecorder_finalize(audiorecorder_obj_t *self);
+
+// record(path_or_None, seconds=None) -- None selects a raw PCM stream;
 // omit it (or pass None) to record until stop() is called.
 static mp_obj_t audiorecorder_record(size_t n_args, const mp_obj_t *pos_args,
                                      mp_map_t *kw_args) {
@@ -729,22 +730,24 @@ static mp_obj_t audiorecorder_record(size_t n_args, const mp_obj_t *pos_args,
     self->task = NULL;
   }
 
+  audiorecorder_finalize(self);
+  self->streaming = path_obj == mp_const_none;
+
   // VFS-aware, same reasoning as audioplayer.c's play(): works with
   // anything MicroPython has mounted, and a bad path raises a normal
   // Python OSError.
-  mp_obj_t open_fn = mp_load_global(MP_QSTR_open);
-  mp_obj_t open_args[2] = {path_obj, MP_OBJ_NEW_QSTR(MP_QSTR_wb)};
-  mp_obj_t file = mp_call_function_n_kw(open_fn, 2, 0, open_args);
-  self->file_obj = file;
+  if (!self->streaming) {
+    mp_obj_t open_fn = mp_load_global(MP_QSTR_open);
+    mp_obj_t open_args[2] = {path_obj, MP_OBJ_NEW_QSTR(MP_QSTR_wb)};
+    self->file_obj = mp_call_function_n_kw(open_fn, 2, 0, open_args);
 
-  // Placeholder header (data size 0) -- see the file-header comment on
-  // why this matters if stop() never gets called.
-  uint8_t hdr[WAV_HEADER_SIZE];
-  build_wav_header(hdr, self->sample_rate, self->channels, 0);
-  int errcode = 0;
-  const mp_stream_p_t *stream_p =
-      mp_get_stream_raise(self->file_obj, MP_STREAM_OP_WRITE);
-  stream_p->write(self->file_obj, hdr, WAV_HEADER_SIZE, &errcode);
+    uint8_t hdr[WAV_HEADER_SIZE];
+    build_wav_header(hdr, self->sample_rate, self->channels, 0);
+    int errcode = 0;
+    const mp_stream_p_t *stream_p =
+        mp_get_stream_raise(self->file_obj, MP_STREAM_OP_WRITE);
+    stream_p->write(self->file_obj, hdr, WAV_HEADER_SIZE, &errcode);
+  }
 
   self->total_bytes = 0;
   self->max_bytes = 0;
@@ -929,7 +932,43 @@ static mp_obj_t audiorecorder_deinit(mp_obj_t self_in) {
 static MP_DEFINE_CONST_FUN_OBJ_1(audiorecorder_deinit_obj,
                                  audiorecorder_deinit);
 
+static mp_uint_t audiorecorder_read(mp_obj_t self_in, void *buf,
+                                    mp_uint_t size, int *errcode) {
+  audiorecorder_obj_t *self = MP_OBJ_TO_PTR(self_in);
+  if (!self->streaming || self->rb.data == NULL) {
+    *errcode = MP_EPERM;
+    return MP_STREAM_ERROR;
+  }
+  if (size == 0) {
+    return 0;
+  }
+  size_t n = rb_read(&self->rb, buf, size);
+  if (n || !self->recording) {
+    return n;
+  }
+  *errcode = MP_EAGAIN;
+  return MP_STREAM_ERROR;
+}
+
+static mp_uint_t audiorecorder_ioctl(mp_obj_t self_in, mp_uint_t request,
+                                     uintptr_t arg, int *errcode) {
+  audiorecorder_obj_t *self = MP_OBJ_TO_PTR(self_in);
+  if (request == MP_STREAM_POLL) {
+    return self->streaming && self->rb.data != NULL &&
+                   (rb_available(&self->rb) || !self->recording)
+               ? (arg & MP_STREAM_POLL_RD) : 0;
+  }
+  return 0;
+}
+
+static const mp_stream_p_t audiorecorder_stream_p = {
+    .read = audiorecorder_read,
+    .ioctl = audiorecorder_ioctl,
+    .is_text = false,
+};
+
 static const mp_rom_map_elem_t audiorecorder_locals_dict_table[] = {
+    {MP_ROM_QSTR(MP_QSTR_readinto), MP_ROM_PTR(&mp_stream_readinto_obj)},
     {MP_ROM_QSTR(MP_QSTR_record), MP_ROM_PTR(&audiorecorder_record_obj)},
     {MP_ROM_QSTR(MP_QSTR_stop), MP_ROM_PTR(&audiorecorder_stop_obj)},
     {MP_ROM_QSTR(MP_QSTR_is_recording),
@@ -946,7 +985,7 @@ static MP_DEFINE_CONST_DICT(audiorecorder_locals_dict,
 
 MP_DEFINE_CONST_OBJ_TYPE(audiorecorder_AudioRecorder_type,
                          MP_QSTR_AudioRecorder, MP_TYPE_FLAG_NONE, make_new,
-                         audiorecorder_make_new, locals_dict,
+                         audiorecorder_make_new, protocol, &audiorecorder_stream_p, locals_dict,
                          &audiorecorder_locals_dict);
 
 // No MP_REGISTER_MODULE here -- this type is registered into the

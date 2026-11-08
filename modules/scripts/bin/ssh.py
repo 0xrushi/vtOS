@@ -59,6 +59,15 @@ class SSHSession:
             if self.client.status() != modssh.CONNECTED:
                 break
 
+            microphone = getattr(self, "microphone", None)
+            if microphone is not None:
+                try:
+                    microphone.pump()
+                except OSError as e:
+                    microphone.close()
+                    self.microphone = None
+                    print("\r\nMicrophone stopped:", e)
+
             sock_ready, _, _ = select.select([self.client], [], [], 0)
             stdin_ready, _, _ = select.select([stdin], [], [], 0)
             if not sock_ready and not stdin_ready:
@@ -75,6 +84,10 @@ class SSHSession:
             if stdin_ready:
                 char = stdin.read(1)
                 if char:
+                    if char == b'\x1c':  # physical microphone key
+                        if getattr(self, "microphone", None) is not None:
+                            self.client.write(b' ')  # Claude /voice tap
+                        continue
                     if char == b'\x1d':  # Ctrl-]: matches telnet-style escape
                         break
                     try:
@@ -202,6 +215,9 @@ def _read_password(prompt):
 
 
 def main(env, args):
+    forward_microphone = bool(args and args[0] == "--mic")
+    if forward_microphone:
+        args = args[1:]
     profiles = load_profiles()
     by_alias = {p["alias"]: p for p in profiles}
 
@@ -228,7 +244,7 @@ def main(env, args):
         auth_pass = args[3] if len(args) > 3 else ""
 
     if host is None:
-        print("Usage: ssh <host> [port] [user] [password]")
+        print("Usage: ssh [--mic] <host> [port] [user] [password]")
         print("       ssh <profile>   (Host entries in /flash/.ssh/config)")
         return
 
@@ -240,7 +256,22 @@ def main(env, args):
 
     previous_scrollback = getattr(env, "ssh_scrollback", False)
     env.ssh_scrollback = True
+    session_started = False
     try:
+        if forward_microphone:
+            from ssh_mic import MicrophoneForwarder
+            session.microphone = MicrophoneForwarder(env, host, port, auth_user, auth_pass)
+            print("Microphone streaming over SSH. Use the mic key with Claude /voice tap.")
+        session_started = True
         session.run()
     finally:
-        env.ssh_scrollback = previous_scrollback
+        try:
+            microphone = getattr(session, "microphone", None)
+            if microphone is not None:
+                microphone.close()
+        finally:
+            try:
+                if not session_started:
+                    session.close()
+            finally:
+                env.ssh_scrollback = previous_scrollback

@@ -1,0 +1,25 @@
+# Runtime partition table for the vtOS dual-boot layout (ESP32-S3, 16 MB).
+#
+# Boot flow (mesh-loader mechanism, eliahreeves/mesh-loader):
+#   - otadata empty/rolled-back -> factory (this loader) runs
+#   - loader: 2 s window, BOOT key (GPIO0) held -> toggle target,
+#     else boot last-used; esp_ota_set_boot_partition(target); restart
+#   - payload (vtos/iqlab) boots in pending-verify OTA state and never
+#     confirms (MicroPython/IDF example don't call
+#     esp_ota_mark_app_valid) -> next reset rolls back to the loader
+#
+# Third payload (pocket shell) lives in the space freed by shrinking iqlab to 1 MB;
+# vfs stays at 0x920000 so /flash is untouched.
+# Keep offsets/sizes in sync with boards/LILYGO_T_DECK/partitions.csv
+# (the vtOS build-time view) and utils/dualboot/iqlab/.
+#
+# Name,     Type, SubType,  Offset,   Size,      Flags
+nvs,        data, nvs,      0x9000,   0x4000,
+otadata,    data, ota,      0xd000,   0x2000,
+loader,     app,  factory,  0x10000,  0x100000,
+vtos,       app,  ota_0,    0x110000, 0x400000,
+iqlab,      app,  ota_1,    0x510000, 0x100000,
+pocket,     app,  ota_2,    0x610000, 0x180000,
+agentfs,    data, spiffs,   0x790000, 0x180000,
+coredump,   data, coredump, 0x910000, 0x10000,
+vfs,        data, fat,      0x920000, 0x6E0000,

@@ -1,0 +1,8 @@
+# Build-time table for the agent payload: the app links at the offset it
+# occupies in the runtime dual-boot table (utils/dualboot/partitions-dual.csv,
+# ota_2 "pocket" @ 0x610000). Everything else matches the runtime table.
+# Name,   Type, SubType,  Offset,   Size,     Flags
+nvs,      data, nvs,      0x9000,   0x4000,
+otadata,  data, ota,      0xd000,   0x2000,
+agent,    app,  factory,  0x610000, 0x180000,
+agentfs,  data, spiffs,   0x790000, 0x180000,

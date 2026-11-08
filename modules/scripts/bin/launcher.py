@@ -24,6 +24,7 @@ MAX_WIDTH = 34
 TOGGLE_KEY = "\x1d"
 
 DESCRIPTIONS = {
+    "agent": "chat agent (openai api)",
     "blechat": "bluetooth mesh chat",
     "blescan": "ble device scan",
     "c2": "command & control",
@@ -67,6 +68,7 @@ DESCRIPTIONS = {
     "vncd": "vnc server",
     "webvncd": "web vnc server",
     "wiki": "offline wikipedia",
+    "yt": "youtube via ssh server",
     "zm": "z-machine games",
 }
 

@@ -13,12 +13,18 @@ class Environment:
         self.kvm = None
         self.ssh_scrollback = False
         self.tui = None
+        self.tft = None
         self.term = None
         self.sts = None
         self.shell = None
         self.audio = None
         self.sd = None
         self.ble = None
+        self.radio = None
+        self.gps = None
+        self.quickpanel = None
+        self.brightness = 16
+        self.app_uses_radio = False
         self.volume = 70
         self.sd_busy = False
         self.update_font(font)

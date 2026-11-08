@@ -52,6 +52,7 @@ RADIO_DIO1 = 45
 BOOT = 0
 
 BL = 42
+from backlight import set_brightness
 
 GPS_TX = 43
 GPS_RX = 44
@@ -190,6 +191,7 @@ def init_tft(env):
             rotation=1,
             buffer_size=env.screen_width*16*2)  # buffer_size needs to be: (screen_width * max_font_height * 2)
     tft.init()
+    env.brightness = set_brightness(16)
     return tft
 
 
@@ -246,9 +248,9 @@ def init_audio(env):
     env.audio.volume(env.volume)
 
 
-def init_mic(env):
+def create_mic(sample_rate=8000, mic_gain=0):
     import audioplayer
-    env.rec = audioplayer.AudioRecorder(
+    return audioplayer.AudioRecorder(
             mclk=ES7210_MCLK,
             bck=ES7210_SCK,
             ws=ES7210_LRCK,
@@ -257,16 +259,28 @@ def init_mic(env):
             i2c_scl=I2C_SCL,
             i2s_num=1,
             channels=1,
-            mic_gain=9,
+            mic_gain=mic_gain,
             dma_buf_count=6,
-            sample_rate=8000,
-            mclk_ratio=512,
+            sample_rate=sample_rate,
+            mclk_ratio=512 if sample_rate == 8000 else 256,
             i2c_shared=True)
+
+
+def init_mic(env, sample_rate=8000, mic_gain=0):
+    env.rec = create_mic(sample_rate, mic_gain)
 
 
 def init_radio(env):
     import lora
     import json
+
+    try:
+        with open("/flash/.radio.json", "r") as f:
+            config = json.load(f)
+    except Exception as e:
+        print("Failed to load radio config. Have you run loracfg?")
+        return
+
     lr = lora.LoRa(cs=RADIO_CS,
                    dio1=RADIO_DIO1,
                    rst=RADIO_RST,
@@ -275,12 +289,6 @@ def init_radio(env):
                    miso=SPI_MISO,
                    mosi=SPI_MOSI)
 
-    try:
-        with open("/flash/.radio.json", "r") as f:
-            config = json.load(f)
-    except Exception as e:
-        print("Failed to load radio config. Have you run loracfg?")
-        return
 
     try:
         lr.begin(freq=float(config["freq"]),
@@ -290,11 +298,13 @@ def init_radio(env):
                  sync_word=0x12,
                  power=int(config["pwr"]))
     except Exception as e:
+        lr.deinit()
         print(f"Radio initialization failed: {e}")
         return
 
     errors = lr.get_device_errors()
     if errors != 0x0000:
+        lr.deinit()
         print(f"SX1262 device errors: 0x{errors:04X}")
         return
 

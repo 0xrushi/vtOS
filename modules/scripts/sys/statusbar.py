@@ -186,6 +186,9 @@ class StatusBar:
         below either way.)"""
         if not text:
             return
+        panel = getattr(self.env, "quickpanel", None)
+        if panel is not None:
+            panel.notify(text)
         self._notify_text = text
         self._notify_until = time.ticks_add(time.ticks_ms(), 5000)
         self.refresh()

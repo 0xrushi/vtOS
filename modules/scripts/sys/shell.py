@@ -41,8 +41,13 @@ def _app(module, tui=False, audio=False, rec=False, radio=False, ble=False):
                 return
 
         app_module = __import__(module, None, None, [''])
-        app_module.main(env, args)
-        gc.collect()
+        previous_radio_use = getattr(env, "app_uses_radio", False)
+        env.app_uses_radio = radio
+        try:
+            app_module.main(env, args)
+        finally:
+            env.app_uses_radio = previous_radio_use
+            gc.collect()
     return _run
 
 class Command:
@@ -107,6 +112,8 @@ class Shell:
         self.register("fc",          _app("bin.fontcfg",    tui=True))
         self.register("play",        _app("bin.player",     tui=True, audio=True))
         self.register("stream",      _app("bin.stream",     tui=True, audio=True))
+        self.register("yt",          _app("bin.yt",         audio=True))
+        self.register("agent",       _app("bin.agent"))
         self.register("lorachat",    _app("bin.lorachat",   tui=True, radio=True))
         self.register("loramon",     _app("bin.loramon",    tui=True, radio=True))
         self.register("blechat",     _app("bin.blechat",    tui=True, ble=True))

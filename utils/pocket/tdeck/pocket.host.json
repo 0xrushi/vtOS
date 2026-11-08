@@ -1,0 +1,59 @@
+{
+  "format": "pocket-host/2",
+  "id": "tdeck-home",
+  "platform": "esp-idf",
+  "form": "takeover",
+  "cadences": [
+    30
+  ],
+  "display": {
+    "logicalViewports": [
+      [
+        400,
+        240
+      ]
+    ],
+    "presentations": [
+      "native"
+    ],
+    "rasterDensity": 1,
+    "animation": "repaint",
+    "auxiliary": {
+      "logicalViewports": [
+        [
+          320,
+          240
+        ]
+      ],
+      "presentations": [
+        "native"
+      ],
+      "rasterDensity": 1
+    }
+  },
+  "panel": {
+    "primary": [
+      400,
+      240
+    ],
+    "auxiliary": [
+      320,
+      240
+    ]
+  },
+  "capabilities": [
+    "input.buttons",
+    "input.touch.auxiliary",
+    "input.text",
+    "display.auxiliary",
+    "text.glyphs.baked",
+    "data.fs",
+    "runtime.worker",
+    "net.http"
+  ],
+  "worker": {
+    "nodes": {
+      "http": 1
+    }
+  }
+}

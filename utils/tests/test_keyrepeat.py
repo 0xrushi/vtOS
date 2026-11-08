@@ -47,6 +47,7 @@ class KeyboardBus:
     def __init__(self):
         self.held = False
         self.alt = False
+        self.mic = False
         self.fail = False
         self.mode = b"\x04"
         self.invalid = False
@@ -59,7 +60,8 @@ class KeyboardBus:
         assert address == 0x55 and self.mode == b"\x03"
         if self.fail:
             raise OSError("read failed")
-        buf[:] = bytes([16 if self.alt else 0, 0, 0, 0, 8 if self.held else 0])
+        buf[:] = bytes([(16 if self.alt else 0) | (64 if self.mic else 0),
+                       0, 0, 0, 8 if self.held else 0])
         if self.invalid:
             buf[:] = b"\x00\xff\xff\xff\xff"
 
@@ -209,3 +211,38 @@ def test_failed_state_read_never_launches(keyboard):
     bus.fail = True
     native.keys = [ord("d")]
     assert read_key(terminal) == ord("d")
+
+
+def test_microphone_key_emits_once_per_press(keyboard):
+    terminal, native, bus, clock = make_terminal(keyboard)
+    bus.mic = True
+    clock.now = 20
+    assert read_key(terminal) == 0x1C
+    clock.now = 100
+    assert read_key(terminal) is None
+    bus.mic = False
+    clock.now = 120
+    assert read_key(terminal) is None
+    bus.mic = True
+    clock.now = 140
+    assert read_key(terminal) == 0x1C
+
+
+def test_microphone_does_not_trigger_after_failed_state_read(keyboard):
+    terminal, native, bus, clock = make_terminal(keyboard)
+    bus.fail = True
+    clock.now = 20
+    assert read_key(terminal) is None
+    bus.fail = False
+    bus.mic = True
+    clock.now = 40
+    assert read_key(terminal) is None
+
+
+def test_microphone_event_does_not_replace_a_character(keyboard):
+    terminal, native, bus, clock = make_terminal(keyboard)
+    bus.mic = True
+    native.keys = [ord("a")]
+    clock.now = 20
+    assert read_key(terminal) == ord("a")
+    assert read_key(terminal) == 0x1C

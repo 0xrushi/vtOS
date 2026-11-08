@@ -1,6 +1,17 @@
+# Build-time table for the vtOS dual-boot slot (ESP32-S3, 16 MB).
+#
+# ESP-IDF links every build against its FIRST app partition, and app
+# images are position-dependent -- so vtOS builds with itself typed as
+# `factory` AT THE OFFSET it occupies in the runtime dual-boot table
+# (utils/dualboot/partitions-dual.csv: ota_0 @ 0x110000). The runtime
+# table flashed at 0x8000 is the dual one, not this one.
+#
+# nvs/otadata/coredump/vfs offsets and sizes are identical to the
+# runtime table so both views of the flash agree.
+#
 # Name,     Type, SubType,  Offset,   Size,      Flags
 nvs,        data, nvs,      0x9000,   0x4000,
 otadata,    data, ota,      0xd000,   0x2000,
-factory,    app,  factory,  0x10000,  0x400000,
-coredump,   data, coredump, 0x410000, 0x10000,
-vfs,        data, fat,      0x420000, 0xBE0000,
+vtos,       app,  factory,  0x110000, 0x400000,
+coredump,   data, coredump, 0x910000, 0x10000,
+vfs,        data, fat,      0x920000, 0x6E0000,

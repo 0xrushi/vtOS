@@ -94,3 +94,8 @@ CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 # only links that blob into the app when this option is on. The
 # cert-test surface is otherwise unused by vtOS.
 CONFIG_ESP_PHY_ENABLE_CERT_TEST=y
+
+# Dual-boot (utils/dualboot/): payloads run in pending-verify OTA state
+# and never call esp_ota_mark_app_valid, so every reset rolls back to
+# the loader partition. MicroPython never confirms OTA apps on its own.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

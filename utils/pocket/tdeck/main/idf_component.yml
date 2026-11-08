@@ -1,0 +1,5 @@
+# The PocketJS components depend on the registry name pocket-nexus/pocket_runtime;
+# point it at the local checkout. build.sh mounts the checkout at /src.
+dependencies:
+  pocket-nexus/pocket_runtime:
+    override_path: /src/platforms/esp-idf/pocket_runtime

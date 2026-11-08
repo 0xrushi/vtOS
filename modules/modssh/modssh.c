@@ -91,6 +91,7 @@ typedef struct _ssh_client_obj_t {
   int port;
   char username[32];
   char password[64];
+  char command[256]; // optional non-PTY exec session, e.g. microphone PCM
 
   int sockfd;
   WOLFSSH_CTX *ctx;
@@ -307,7 +308,12 @@ static void ssh_task(void *arg) {
   // wolfSSH_connect()'s state machine checks ssh->sendTerminalRequest
   // partway through, so setting this after connect() returns is too
   // late (sends a bare "shell" request with no pty-req).
-  wolfSSH_SetChannelType(self->ssh, WOLFSSH_SESSION_TERMINAL, NULL, 0);
+  if (self->command[0]) {
+    wolfSSH_SetChannelType(self->ssh, WOLFSSH_SESSION_EXEC,
+                          (byte *)self->command, strlen(self->command));
+  } else {
+    wolfSSH_SetChannelType(self->ssh, WOLFSSH_SESSION_TERMINAL, NULL, 0);
+  }
 
   // Bound how long we wait for the server's first byte -- wolfSSH_connect()
   // treats any internal WS_WANT_READ as fatal with no retry, so this can
@@ -342,35 +348,79 @@ static void ssh_task(void *arg) {
   // Steady state: no SO_RCVTIMEO (see SSH_RECV_TIMEOUT_MS above) --
   // select() gates whether we call into wolfSSH at all, so its own
   // recv() only ever runs when data is already available.
-  uint8_t iobuf[256];
+  uint8_t iobuf[1024];
+  uint8_t txbuf[1024];
+  size_t tx_len = 0;
+  size_t tx_offset = 0;
   while (!self->stop_request) {
     fd_set rfds;
     FD_ZERO(&rfds);
     FD_SET(self->sockfd, &rfds);
     struct timeval tv;
-    tv.tv_sec = SSH_RECV_TIMEOUT_MS / 1000;
-    tv.tv_usec = (SSH_RECV_TIMEOUT_MS % 1000) * 1000;
+    bool busy = tx_len > 0 || rb_available(&self->tx) > 0 ||
+                wolfSSH_stream_peek(self->ssh, NULL, sizeof(iobuf)) > 0;
+    tv.tv_sec = 0;
+    tv.tv_usec = busy ? 1000 : SSH_RECV_TIMEOUT_MS * 1000;
     int sel = select(self->sockfd + 1, &rfds, NULL, NULL, &tv);
+    if (sel < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      self->last_error = -errno;
+      break;
+    }
 
     if (sel > 0 && FD_ISSET(self->sockfd, &rfds)) {
-      int n = wolfSSH_stream_read(self->ssh, iobuf, sizeof(iobuf));
-      if (n > 0) {
-        rb_write(&self->rx, iobuf, (size_t)n);
-      } else if (n != WS_WANT_READ) {
-        // WS_EOF / WS_CHANNEL_CLOSED / WS_DISCONNECT / any other error.
-        self->last_error = wolfSSH_get_error(self->ssh);
+      // Process a single packet, including window updates, without waiting
+      // for terminal data. An audio exec session may never send stdout.
+      int rc = wolfSSH_worker(self->ssh, NULL);
+      if (rc == WS_EXTDATA) {
+        size_t space = rb_free_space(&self->rx);
+        if (space > 0) {
+          int n = wolfSSH_extended_data_read(self->ssh, iobuf,
+              space < sizeof(iobuf) ? space : sizeof(iobuf));
+          if (n > 0) {
+            rb_write(&self->rx, iobuf, (size_t)n);
+          }
+        }
+      } else if (rc != WS_SUCCESS && rc != WS_CHAN_RXD &&
+                 rc != WS_REKEYING && rc != WS_WANT_READ && rc != WS_WANT_WRITE) {
+        self->last_error = rc;
         break;
       }
     }
 
-    size_t avail = rb_available(&self->tx);
-    if (avail > 0) {
-      size_t chunk = avail < sizeof(iobuf) ? avail : sizeof(iobuf);
-      size_t got = rb_read(&self->tx, iobuf, chunk);
-      if (got > 0) {
-        wolfSSH_stream_send(self->ssh, iobuf, (word32)got);
+    // Decrypted data may remain even when the socket is no longer readable.
+    // Drain it without dropping bytes when the Python consumer is slower.
+    size_t space = rb_free_space(&self->rx);
+    int pending = wolfSSH_stream_peek(self->ssh, NULL, sizeof(iobuf));
+    if (space > 0 && pending > 0) {
+      size_t count = space < (size_t)pending ? space : (size_t)pending;
+      int n = wolfSSH_stream_read(self->ssh, iobuf, count);
+      if (n > 0) {
+        rb_write(&self->rx, iobuf, (size_t)n);
       }
     }
+
+    if (tx_len == 0) {
+      tx_len = rb_read(&self->tx, txbuf, sizeof(txbuf));
+      tx_offset = 0;
+    }
+    if (tx_len > 0) {
+      int n = wolfSSH_stream_send(self->ssh, txbuf + tx_offset,
+                                  (word32)(tx_len - tx_offset));
+      if (n > 0) {
+        tx_offset += (size_t)n;
+        if (tx_offset == tx_len) {
+          tx_len = 0;
+        }
+      } else if (n != WS_WINDOW_FULL && n != WS_REKEYING &&
+                 n != WS_WANT_READ && n != WS_WANT_WRITE) {
+        self->last_error = wolfSSH_get_error(self->ssh);
+        break;
+      }
+    }
+    vTaskDelay(1);
   }
 
   self->state = SSH_STATE_CLOSED;
@@ -407,6 +457,7 @@ static mp_obj_t ssh_client_make_new(const mp_obj_type_t *type, size_t n_args,
   self->last_error = 0;
   self->auth_attempts = 0;
   self->last_auth_type = -1;
+  self->command[0] = '\0';
 
   if (!rb_init(&self->rx, SSH_RB_SIZE) || !rb_init(&self->tx, SSH_RB_SIZE)) {
     mp_raise_msg(&mp_type_MemoryError,
@@ -444,6 +495,12 @@ static mp_obj_t ssh_client_connect(size_t n_args, const mp_obj_t *args) {
   mp_int_t port = mp_obj_get_int(args[2]);
   const char *username = mp_obj_str_get_str(args[3]);
   const char *password = mp_obj_str_get_str(args[4]);
+  const char *command = n_args > 5 && args[5] != mp_const_none
+                            ? mp_obj_str_get_str(args[5]) : "";
+  if (strlen(command) >= sizeof(self->command)) {
+    mp_raise_ValueError(MP_ERROR_TEXT("SSH exec command too long"));
+  }
+  strcpy(self->command, command);
 
   strncpy(self->host, host, sizeof(self->host) - 1);
   self->host[sizeof(self->host) - 1] = '\0';
@@ -495,7 +552,7 @@ static mp_obj_t ssh_client_connect(size_t n_args, const mp_obj_t *args) {
 
   return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(ssh_client_connect_obj, 5, 5,
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(ssh_client_connect_obj, 5, 6,
                                            ssh_client_connect);
 
 static mp_obj_t ssh_client_status(mp_obj_t self_in) {

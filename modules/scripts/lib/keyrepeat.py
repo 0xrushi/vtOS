@@ -10,6 +10,7 @@ _BACKSPACE = 8
 _D_KEYS = (ord("d"), ord("D"))
 # Private byte the shell treats as "open the launcher" (Alt+D).
 LAUNCHER_KEY = 0x1D
+MICROPHONE_KEY = 0x1C
 _POLLIN = 1
 _POLLOUT = 4
 _POLL = 3
@@ -48,6 +49,9 @@ class KeyboardRepeatTerminal(io.IOBase):
         self._pending = None
         self._key_mode = True
         self._alt = False
+        self._mic_down = False
+        self._mic_known = False
+        self._mic_pressed = False
         self._held = self._read_held()
         self._last_state = time.ticks_ms()
 
@@ -62,6 +66,11 @@ class KeyboardRepeatTerminal(io.IOBase):
                 raise ValueError("Keyboard does not report held keys")
             # ALT is column 0, row 4; Backspace is column 4, row 3.
             self._alt = bool(self._matrix[0] & (1 << 4))
+            mic_down = bool(self._matrix[0] & (1 << 6))
+            if self._mic_known and mic_down and not self._mic_down:
+                self._mic_pressed = True
+            self._mic_down = mic_down
+            self._mic_known = True
             return bool(self._matrix[4] & (1 << 3))
         finally:
             self.bus.writeto(_ADDRESS, _KEY_MODE)
@@ -92,12 +101,17 @@ class KeyboardRepeatTerminal(io.IOBase):
                 # A missing/failed state read must never sustain deletion.
                 self._held = False
                 self._alt = False
+                self._mic_known = False
+                self._mic_pressed = False
             self._last_state = now
         if key in _D_KEYS and self._alt:
             # The keyboard reports ALT only in its key matrix, not in the
             # character stream, so Alt+D arrives as a plain "d".
             self._pending = LAUNCHER_KEY
             return
+        if key is None and self._mic_pressed:
+            self._mic_pressed = False
+            key = MICROPHONE_KEY
         self._pending = self.repeat.update(key, self._held, now)
 
     def readinto(self, buf):
