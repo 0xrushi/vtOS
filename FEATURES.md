@@ -8,10 +8,10 @@ run. Nothing here claims more than that.
 
 | Area | Tool | Status |
 |---|---|---|
-| Wi-Fi inspector | `sniff` (management frames, pcap), `spectrum` (2.4 GHz band profile), `wardrive` (scan, WiGLE CSV, KML; GPS only on the Plus) | sniff verified; wardrive verified with a synthetic fix, real GPS untested |
+| Wi-Fi inspector | `sniff` (management frames, pcap), `spectrum` (2.4 GHz band profile), `wardrive` (scan, WiGLE CSV, KML; needs the Plus's GPS) | sniff verified; wardrive verified with a synthetic fix, **not yet run against the Plus's real GPS** (the GPS shares the UART0 pins that the board config now frees) |
 | BLE explorer | `blescan` (company IDs, names), `blechat` | blescan verified (28 devices) |
 | Sub-GHz (LoRa chip, SX1262) | `loramon` (rx/tx monitor), `lorachat`, `loracfg` | implemented; loramon not re-verified this session |
-| RF lab | iqlab: `tone <40\|80> [offset_MHz]`, keyboard input | verified on a HackRF (tones at set offsets); the vtOS `iqtx` app is gated off (RAM bank) |
+| RF lab | iqlab: `tone <40\|80> [offset_MHz]`, keyboard input ([explained here](docs/IQTONE.md)) | verified on a HackRF (tones at set offsets); the vtOS `iqtx` app is gated off (RAM bank) |
 | Terminal | vtOS shell, SSH client with profiles, SFTP/FTP, telnet, IRC, file manager, Alt+D launcher, `neofetch` | existing apps; launcher/SSH profiles verified earlier |
 | Remote access | `sshd`, `telnetd`, `ftpd`, `sftpd`, `vncd`, `webvncd` | existing, not re-tested |
 | USB | `usbmsc` (SD card as a USB drive) | existing |
@@ -19,17 +19,32 @@ run. Nothing here claims more than that.
 | Video | `yt`: YouTube rendered on an SSH server, JPEG + MP3 over SSH (`tools/ytstream`) | server and parser tested on a Mac; **not run on the device**; real YouTube downloads blocked on the test Mac (403) |
 | Boot | dual-boot loader with menu | verified |
 
-## Missing / not supported
+## Not built yet (the hardware could do it)
 
-| Wanted | Why |
+| Wanted | Notes |
 |---|---|
-| Wi-Fi deauthentication detection | not written |
-| I2C scanner, SPI/UART bridge tool | MicroPython can do it by hand; no app |
-| USB keyboard/mouse/gamepad, macros | not written (only mass storage) |
-| IR remote | no IR LED/receiver on the T-Deck |
-| Sub-GHz record/replay (CC1101 style) | the radio is a LoRa SX1262, not a general sub-GHz transceiver |
-| NFC/RFID | no reader hardware, no code |
-| 30 fps video | `yt` is 8 fps by default; a C decoder module would be needed |
-| Agent voice (AssemblyAI) | planned, not built |
-| vtOS `iqtx` transmitting | RAM bank reservation breaks vtOS boot; use iqlab |
-| PocketJS / Pocket Shell | shelved on purpose, code kept in `utils/pocket/` |
+| Wi-Fi deauthentication detection | management frames are already captured by `sniff`; needs a detector |
+| I2C scanner, SPI/UART bridge tool | MicroPython can do it by hand; no app yet |
+| USB keyboard/mouse/gamepad, macros | the S3's USB can act as HID; only mass storage exists. The one USB-C port is shared with the serial console |
+| Agent voice (AssemblyAI) | planned: record with the mic, send to AssemblyAI's cloud API |
+| Faster `yt` (30 fps) | 8 fps today; a C JPEG decoder module on the second core might reach it, unmeasured |
+| vtOS `iqtx` transmitting | blocked by a RAM-reservation boot bug, not by hardware; use iqlab |
+
+## Not possible on this hardware (missing part or hard limit)
+
+Strictly ruled out by the board or the chip, not by missing code. These are for
+the T-Deck Plus in use here (GPS present); a plain T-Deck has no GPS receiver,
+so GPS wardriving is also impossible there. Items marked
+(unchecked) are from what I know of the T-Deck and the ESP32-S3; I have not
+verified them against the schematic.
+
+| Wanted | Why it can't work |
+|---|---|
+| IR remote (learn or send) | no IR LED or IR receiver on the board (unchecked) |
+| NFC / RFID | no NFC reader chip or antenna on the board (unchecked); would need an external module such as a PN532 |
+| Sub-GHz capture and replay of garage/car-key style remotes | the radio is a LoRa chip (SX1262); it does LoRa and FSK only, not the OOK/ASK that most simple remotes use. A CC1101-style module would be needed |
+| Any frequency outside the unit's one LoRa band | the SX1262's antenna matching is built for one band per T-Deck variant (433/868/915 MHz class); I have not checked which band your unit is |
+| Transmitting at an arbitrary RF frequency, e.g. 2000 MHz | the S3's only transmitter is the 2.4 GHz Wi-Fi radio: channels 1-13 plus about +/-20 MHz from the IQ offset trick |
+| 5 GHz or 6 GHz Wi-Fi scan or sniff | the ESP32-S3 radio is 2.4 GHz only |
+| Bluetooth Classic (A2DP audio, classic device scan) | the ESP32-S3 has BLE only, no BR/EDR |
+| Running a speech or language model on the device | 8 MB PSRAM and a 240 MHz dual core are far too small; voice and chat have to go to a cloud API |

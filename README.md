@@ -172,7 +172,7 @@ You can execute the following commands from the built-in shell:
 | `gemini` | Gemini protocol browser; connect to a `gemini://` url, or use `menu gemini` for saved sites |
 | `gopher` | Gopher protocol browser; connect to a `gopher://` url, or use `menu gopher` for saved sites |
 | `irc` | Connects to an IRC channel given a server, port, nickname and channel. Try `menu irc` |
-| `iqtx` | IQ lab transmitter: plays a preloaded IQ waveform through the ESP32-S3 RF SRAM path (exclusive RF; WiFi/BLE down for the session). Commands: `tone 40`/`tone 80`, `stop`, `reinit`. Use only where permitted |
+| `iqtx` | (see [docs/IQTONE.md](docs/IQTONE.md); transmitting needs the iqlab payload) IQ lab transmitter: plays a preloaded IQ waveform through the ESP32-S3 RF SRAM path (exclusive RF; WiFi/BLE down for the session). Commands: `tone 40`/`tone 80`, `stop`, `reinit`. Use only where permitted |
 | `loracfg` | Utility to configure LoRa frequency and power. Try `menu loracfg` |
 | `lorachat` | A basic chatroom based on the LoRa radio |
 | `loramon` | TUI LoRa monitor; lists received packets with timestamp, length and RSSI; `/tx` transmits plain text on the configured frequency, `/freq` retunes at runtime |
