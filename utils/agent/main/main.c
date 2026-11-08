@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT
  * T-Deck agent, phase A1: text console + keyboard + SD file tools.
- * Model, Wi-Fi and voice come in later phases (see TODO.md).
+ * Superseded by the vtOS app modules/scripts/bin/agent.py; kept as a reference.
  */
 #include "console.h"
 #include "display_min.h"

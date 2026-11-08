@@ -9,9 +9,9 @@ comes back to the menu.
 - **iqlab** plays raw IQ samples through the radio hardware (an arbitrary tone
   next to a WiFi channel, checked with a HackRF). That needs a 64 KB RF SRAM
   block and the radio to itself. MicroPython's heap normally owns that RAM:
-  reserving it at link time stopped vtOS from booting (see TODO.md, "PLAYBACK IS
-  GATED OFF"), so the vtOS `iqtx` app cannot transmit. A separate firmware has
-  no such conflict.
+  reserving it at link time stopped vtOS from booting (the reservation is left
+  disabled in `modules/mod_iqtx/mod_iqtx.c`), so the vtOS `iqtx` app cannot
+  transmit. A separate firmware has no such conflict.
 - **While transmitting, WiFi and BLE are off.** The radio belongs to the tone.
 - **Safe experiments.** A payload that is never marked valid rolls back to the
   loader on the next reset, so a bad build can't lock you out.

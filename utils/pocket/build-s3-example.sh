@@ -14,4 +14,4 @@ ls -la build/*.bin
 # NOTE: the first idf.py build fails on tests/esp-idf/examples/smoke/main/main.c
 # (-Werror=missing-field-initializers: pocket_memory_package gained a `flags`
 # field). Patch the initializer to `{..., pocketjs_package_smoke.size, 0}` and
-# rerun idf.py build; that produced the 1,552,240 B image recorded in TODO.md.
+# rerun idf.py build; that produced the 1,552,240 B image.

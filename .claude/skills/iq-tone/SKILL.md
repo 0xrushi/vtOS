@@ -9,7 +9,7 @@ Two front ends drive the same ESP32-S3 RF hardware path:
 
 | Front end | Where | Status |
 |---|---|---|
-| `iqtx` (vtOS app, Alt+D launcher) | `modules/mod_iqtx/`, `modules/scripts/bin/iqtx.py` | Playback gated off: `BANK_PROTECTED = 0` (see TODO.md) |
+| `iqtx` (vtOS app, Alt+D launcher) | `modules/mod_iqtx/`, `modules/scripts/bin/iqtx.py` | Playback gated off: `BANK_PROTECTED = 0` (set in `modules/mod_iqtx/mod_iqtx.c`) |
 | iqlab (dual-boot payload) | `esp32-iq-tx` repo, `examples/sample_rates` | Tone works; console is the USB serial port (`rates>`), not the T-Deck keyboard |
 
 Commands: `tone 40|80`, `stop`, plus `reinit` and `info` in `iqtx`.
@@ -89,11 +89,11 @@ Use **`iqtx`** only once the linker-fragment fix lands and `BANK_PROTECTED` is 1
 ## Known limits and open items
 
 - Power drifts between stop/start cycles (S3 lacks the TX power-control-field restore); `reinit` is the workaround.
-- vtOS `iqtx`: the link-time reservation `SOC_RESERVE_MEMORY_REGION(0x3fcd0000..0x3fce0000)` kills boot on this board (bisected 2026-11-08), so playback refuses with "RF BANK UNPROTECTED". Planned fix per TODO.md: carve the bank with a linker fragment, then set `IQTX_BANK_PROTECTED` to 1.
+- vtOS `iqtx`: the link-time reservation `SOC_RESERVE_MEMORY_REGION(0x3fcd0000..0x3fce0000)` kills boot on this board (bisected 2026-11-08), so playback refuses with "RF BANK UNPROTECTED". Planned fix: carve the bank with a linker fragment, then set `IQTX_BANK_PROTECTED` to 1.
 - iqlab keyboard input and the offset parameter were added 2026-11-08 and built, not yet verified on device at the time of writing.
 - Unverified: negative offsets (reverse circle), whether hardware requires N to be a multiple of 256, and why NCO must be off.
 - While running, the app owns the RF: WiFi and BLE are taken down (`iqtx` restores WiFi on quit).
 
 ## Flashing / dual-boot notes
 
-Loader at 0x10000, vtOS at 0x110000, iqlab at 0x510000. See `summary.md` for the working flash procedure (unplug USB, hold BOOT, replug, wait for port to settle, `--before no_reset`) and the display bring-up fixes (GPIO10 power, RAMWR, byte order).
+Loader at 0x10000, vtOS at 0x110000, iqlab at 0x510000. See `utils/dualboot/README.md` for the flash procedure and how to enter download mode. The display bring-up fixes (GPIO10 power, RAMWR command, byte order) are in `display_min.c` of the loader and iqlab.
