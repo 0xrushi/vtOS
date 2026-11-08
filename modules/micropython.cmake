@@ -36,3 +36,9 @@ include(${CMAKE_CURRENT_LIST_DIR}/modssh/micropython.cmake)
 
 # include the vi editor module
 include(${CMAKE_CURRENT_LIST_DIR}/modvi/micropython.cmake)
+
+# include the modwifi module (passive WiFi promiscuous sniffer)
+include(${CMAKE_CURRENT_LIST_DIR}/modwifi/micropython.cmake)
+
+# include the mod_iqtx module (RF SRAM IQ playback lab mode)
+include(${CMAKE_CURRENT_LIST_DIR}/mod_iqtx/micropython.cmake)

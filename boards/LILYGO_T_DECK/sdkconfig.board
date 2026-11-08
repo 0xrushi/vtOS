@@ -87,3 +87,10 @@ CONFIG_BT_NIMBLE_DIS_SERVICE=n
 # this project's small (<=31 byte) mesh packets.
 # CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_INTERNAL is not set
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+
+# RF SRAM IQ playback lab mode (modules/mod_iqtx, bin/iqtx.py). The S3
+# backend calls the vendor PHY cert-test entry points (esp_phy_rftest_*,
+# esp_phy_wifi_tx_tone) which live in librftest.a -- the esp_phy CMake
+# only links that blob into the app when this option is on. The
+# cert-test surface is otherwise unused by vtOS.
+CONFIG_ESP_PHY_ENABLE_CERT_TEST=y

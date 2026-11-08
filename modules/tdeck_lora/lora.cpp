@@ -182,6 +182,13 @@ static mp_obj_t lora_rssi(mp_obj_t self_in) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(lora_rssi_obj, lora_rssi);
 
+// snr() -> float (dB, last received packet)
+static mp_obj_t lora_snr(mp_obj_t self_in) {
+  lora_obj_t *self = (lora_obj_t *)MP_OBJ_TO_PTR(self_in);
+  return mp_obj_new_float(self->radio->getSNR());
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(lora_snr_obj, lora_snr);
+
 // 1. Create a quick subclass to bypass the 'protected' restriction
 class SX1262_Exposed : public SX1262 {
 public:
@@ -255,6 +262,7 @@ static const mp_rom_map_elem_t lora_locals_dict_table[] = {
     {MP_ROM_QSTR(MP_QSTR_start_receive), MP_ROM_PTR(&lora_start_receive_obj)},
     {MP_ROM_QSTR(MP_QSTR_receive), MP_ROM_PTR(&lora_receive_obj)},
     {MP_ROM_QSTR(MP_QSTR_rssi), MP_ROM_PTR(&lora_rssi_obj)},
+    {MP_ROM_QSTR(MP_QSTR_snr), MP_ROM_PTR(&lora_snr_obj)},
     {MP_ROM_QSTR(MP_QSTR_get_status), MP_ROM_PTR(&lora_get_status_obj)},
     {MP_ROM_QSTR(MP_QSTR_get_device_errors), MP_ROM_PTR(&lora_get_device_errors_obj)},
     {MP_ROM_QSTR(MP_QSTR_deinit), MP_ROM_PTR(&lora_deinit_obj)},

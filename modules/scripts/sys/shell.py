@@ -108,10 +108,18 @@ class Shell:
         self.register("play",        _app("bin.player",     tui=True, audio=True))
         self.register("stream",      _app("bin.stream",     tui=True, audio=True))
         self.register("lorachat",    _app("bin.lorachat",   tui=True, radio=True))
+        self.register("loramon",     _app("bin.loramon",    tui=True, radio=True))
         self.register("blechat",     _app("bin.blechat",    tui=True, ble=True))
         self.register("rec",         _app("bin.rec",        rec=True))
-        self.register("vi",          _app("modvi"))
-        self.register("zm",          _app("modzm"))
+        self.register("vi",         _app("modvi"))
+        self.register("zm",         _app("modzm"))
+        # passive RF tools (modwifi-backed; no frame injection)
+        self.register("sniff",      _app("bin.sniff"))
+        self.register("spectrum",   _app("bin.spectrum",   tui=True))
+        self.register("blescan",    _app("bin.blescan"))
+        self.register("wardrive",   _app("bin.wardrive"))
+        # RF IQ playback lab mode (exclusive RF; app-level only)
+        self.register("iqtx",       _app("bin.iqtx",       tui=True))
 
     def _load_aliases(self):
         try:

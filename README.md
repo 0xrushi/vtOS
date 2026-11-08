@@ -112,6 +112,7 @@ You can execute the following commands from the built-in shell:
 | Command | Description |
 | :---   | :--- |
 | `blechat` | A flood-mesh chatroom broadcast over Bluetooth LE advertising |
+| `blescan` | Passive BLE scan; lists nearby devices with address, RSSI, company ID and name |
 | `chess` | Basic chess game using unicode characters |
 | `clear` | Clears the screen |
 | `c2` | Codec 2 audio/voice codec encode/decode utility |
@@ -126,8 +127,10 @@ You can execute the following commands from the built-in shell:
 | `gemini` | Gemini protocol browser; connect to a `gemini://` url, or use `menu gemini` for saved sites |
 | `gopher` | Gopher protocol browser; connect to a `gopher://` url, or use `menu gopher` for saved sites |
 | `irc` | Connects to an IRC channel given a server, port, nickname and channel. Try `menu irc` |
+| `iqtx` | IQ lab transmitter: plays a preloaded IQ waveform through the ESP32-S3 RF SRAM path (exclusive RF; WiFi/BLE down for the session). Commands: `tone 40`/`tone 80`, `stop`, `reinit`. Use only where permitted |
 | `loracfg` | Utility to configure LoRa frequency and power. Try `menu loracfg` |
 | `lorachat` | A basic chatroom based on the LoRa radio |
+| `loramon` | TUI LoRa monitor; lists received packets with timestamp, length and RSSI; `/tx` transmits plain text on the configured frequency, `/freq` retunes at runtime |
 | `md` | Markdown/plain text file viewer; open a `.md`, `.markdown` or `.txt` file |
 | `menu` | An interactive shortcut menu for commands. |
 | `mines` | Opens the minesweeper clone |
@@ -140,16 +143,19 @@ You can execute the following commands from the built-in shell:
 | `sftp` | SFTP Client that mounts its content as a VFS |
 | `sftpd` | SFTP Server; runs in the background |
 | `smtp` | SMTP email client; compose in `vi` and send with `smtp <host> <user> <password> [port]` |
+| `spectrum` | Live 2.4 GHz spectrum meter; hops channels with the WiFi sniffer and shows per-channel frame counts, type split, peak RSSI and unique AP counts. RX only. Try `menu spectrum` |
 | `neofetch` | System summary: OS, uptime, CPU and temperature, heap/PSRAM, flash/SD usage, battery, network. Also in the Alt+D launcher. |
 | `ssh` | SSH Client; connect to a remote ssh server |
 | `sshd` | SSH Server; runs in the background, shares this device's shell. |
+| `sniff` | Passive 802.11 sniffer (modwifi); captures your own network's traffic to a `.pcap` for Wireshark. Takes exclusive radio use. |
 | `stream` | Streams internet radio (MP3 over HTTP); pass a URL, or use `menu stream` for saved stations |
 | `telnet` | Connects to a telnet server. try `menu telnet` |
 | `telnetd` | Telnet Server; runs in the background, shares this device's shell. Unencrypted. |
 | `usbmsc` | Shares `/sd` with your PC as a USB Mass Storage drive over USB-C. |
 | `vi` | Opens the vi port (based on [neatvi](https://github.com/aligrudi/neatvi)). Includes 5 configurable themes, check `.virc` |
-| `vncd` | Launches a VNC Server. Known compatible with TigerVNC. Terribly slow |
+| `vncd` | Launches a VNC Server. Known compatible with TigerVNC. Terribly slow. |
 | `webvncd` | Launches a web "VNC"-like server. Faster than `vncd` |
+| `wardrive` | GPS-tagged WiFi scan logger (WiGLE CSV + KML); T-Deck Plus only (GPS lives on GPIO 43/44) |
 | `wiki` | Offline Simple English Wikipedia reader; ~170MB from SD. See `utils/wikiconvert.py` |
 | `zm` | Launches `dfrotz`, the ZMachine interpreter |
 
