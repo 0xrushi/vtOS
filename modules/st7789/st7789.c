@@ -1509,6 +1509,7 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(st7789_map_bitarray_to_rgb565_obj, 3,
 
 #define JPG_MODE_FAST (0)
 #define JPG_MODE_SLOW (1)
+#define JPG_MODE_STRIP (2)
 
 // User defined device identifier
 typedef struct {
@@ -1637,6 +1638,33 @@ static int out_slow(                                    // 1:Ok, 0:Aborted
     return 1;     // Continue to decompress
 }
 
+// Assemble one MCU row before sending it. Unlike SLOW's window/transfer per
+// 16x16 block, STRIP needs one window/transfer per full-width 16-pixel strip.
+// At 320 pixels wide that is 20 times fewer display transactions, using the
+// same 10 KB resident buffer already reserved for terminal text.
+static int out_strip(JDEC *jd, void *bitmap, JRECT *rect) {
+    IODEV *dev = (IODEV *)jd->device;
+    st7789_ST7789_obj_t *self = dev->self;
+    const uint8_t *src = bitmap;
+    size_t stride = 2 * dev->wfbuf;
+    size_t row_bytes = 2 * (rect->right - rect->left + 1);
+    uint8_t *dst = dev->fbuf + 2 * rect->left;
+    for (unsigned int y = rect->top; y <= rect->bottom; y++) {
+        memcpy(dst, src, row_bytes);
+        src += row_bytes;
+        dst += stride;
+    }
+    if (rect->right + 1 == jd->width) {
+        set_window(self, jd->x_offs, jd->y_offs + rect->top,
+            jd->x_offs + jd->width - 1, jd->y_offs + rect->bottom);
+        DC_HIGH();
+        CS_LOW();
+        write_spi(self->spi_obj, dev->fbuf, stride * (rect->bottom - rect->top + 1));
+        CS_HIGH();
+    }
+    return 1;
+}
+
 //
 // Draw jpg from a file at x, y using a fast mode or slow mode
 //
@@ -1645,7 +1673,7 @@ static mp_obj_t st7789_ST7789_jpg(size_t n_args, const mp_obj_t *args) {
     st7789_ST7789_obj_t *self = MP_OBJ_TO_PTR(args[0]);
     static unsigned int (*input_func)(JDEC *, uint8_t *, unsigned int) = NULL;
     mp_buffer_info_t bufinfo;
-    IODEV devid;
+    IODEV devid = {0};
 
     if (mp_obj_is_type(args[1], &mp_type_bytes)) {
         mp_get_buffer_raise(args[1], &bufinfo, MP_BUFFER_READ);
@@ -1689,6 +1717,11 @@ static mp_obj_t st7789_ST7789_jpg(size_t n_args, const mp_obj_t *args) {
             if (mode == JPG_MODE_FAST) {
                 bufsize = 2 * jdec.width * jdec.height;
                 outfunc = out_fast;
+            } else if (mode == JPG_MODE_STRIP) {
+                bufsize = 2 * jdec.width * jdec.msy * 8;
+                outfunc = out_strip;
+                jdec.x_offs = x;
+                jdec.y_offs = y;
             } else {
                 bufsize = 2 * jdec.msx * 8 * jdec.msy * 8;
                 outfunc = out_slow;
@@ -2567,6 +2600,7 @@ static const mp_map_elem_t st7789_module_globals_table[] = {
     {MP_ROM_QSTR(MP_QSTR_WHITE), MP_ROM_INT(WHITE)},
     {MP_ROM_QSTR(MP_QSTR_FAST), MP_ROM_INT(JPG_MODE_FAST)},
     {MP_ROM_QSTR(MP_QSTR_SLOW), MP_ROM_INT(JPG_MODE_SLOW)},
+    {MP_ROM_QSTR(MP_QSTR_STRIP), MP_ROM_INT(JPG_MODE_STRIP)},
     {MP_ROM_QSTR(MP_QSTR_MADCTL_MY), MP_ROM_INT(ST7789_MADCTL_MY)},
     {MP_ROM_QSTR(MP_QSTR_MADCTL_MX), MP_ROM_INT(ST7789_MADCTL_MX)},
     {MP_ROM_QSTR(MP_QSTR_MADCTL_MV), MP_ROM_INT(ST7789_MADCTL_MV)},

@@ -341,8 +341,12 @@ This project's source code is licensed under the **MIT License**. However, if yo
 ## YouTube over SSH (`yt`)
 
 `yt <words or url>` plays YouTube on the T-Deck by letting an SSH server do
-the decoding: it streams 320x240 JPEG frames and MP3 audio, the T-Deck draws
-and plays them. Setup, protocol and limits are in
+the decoding: it streams JPEG frames and MP3 audio, the T-Deck draws and
+plays them. The optimized native decoder batches display transfers into
+strips: `yt --smooth <words>` targets 256x144 at 30 fps, and
+`yt --fast <words>` targets 176x96 at 60 fps. These rates need rebuilt firmware
+and depend on device/network throughput; playback prints measured FPS on exit.
+Setup, protocol and limits are in
 [tools/ytstream/README.md](tools/ytstream/README.md).
 
 ## Dual boot and feature status

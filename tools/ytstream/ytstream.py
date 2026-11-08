@@ -101,6 +101,8 @@ def main():
     ap.add_argument("--w", type=int, default=320)
     ap.add_argument("--h", type=int, default=240)
     ap.add_argument("--fps", type=int, default=8)
+    ap.add_argument("--fit", choices=("contain", "cover"), default="contain",
+                    help="contain: letterbox; cover: crop to fill the display")
     ap.add_argument("--quality", type=int, default=9, help="ffmpeg mjpeg -q:v, 2 best .. 31 worst")
     ap.add_argument("--abr", default="40k", help="audio bitrate (mono 22.05 kHz MP3)")
     ap.add_argument("--test", action="store_true", help="synthetic source, no network")
@@ -135,13 +137,20 @@ def main():
     send(b"M", json.dumps({"title": title[:60], "w": args.w, "h": args.h,
                            "fps": args.fps}).encode())
 
-    vf = ("scale=%d:%d:force_original_aspect_ratio=decrease,"
-          "pad=%d:%d:(ow-iw)/2:(oh-ih)/2,fps=%d,format=yuvj420p"
-          % (args.w, args.h, args.w, args.h, args.fps))
+    # Drop unneeded source frames before scaling; one encoder thread avoids
+    # frame-thread buffering at the small resolutions used by the device.
+    if args.fit == "cover":
+        vf = ("fps=%d,scale=%d:%d:force_original_aspect_ratio=increase,"
+              "crop=%d:%d,setsar=1,format=yuvj420p"
+              % (args.fps, args.w, args.h, args.w, args.h))
+    else:
+        vf = ("fps=%d,scale=%d:%d:force_original_aspect_ratio=decrease,"
+              "pad=%d:%d:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuvj420p"
+              % (args.fps, args.w, args.h, args.w, args.h))
     r, w = os.pipe()
     cmd = (["ffmpeg", "-loglevel", "error"] + (["-nostdin"] if downloader is None else []) + inputs +
-           ["-map", "0:v:0", "-vf", vf, "-c:v", "mjpeg", "-q:v", str(args.quality)] + limit +
-           ["-f", "image2pipe", "pipe:1",
+           ["-map", "0:v:0", "-vf", vf, "-c:v", "mjpeg", "-threads:v", "1", "-q:v", str(args.quality)] + limit +
+           ["-flush_packets", "1", "-f", "image2pipe", "pipe:1",
             "-map", "0:a:0" if not args.test else "1:a:0", "-ac", "1", "-ar", "22050",
             "-c:a", "libmp3lame", "-b:a", args.abr] + limit + ["-f", "mp3", "pipe:%d" % w])
     try:

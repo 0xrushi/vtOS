@@ -329,13 +329,15 @@ static int huffext (		/* >=0: decoded data, <0: error code */
 		if (s & msk) v++;
 		msk >>= 1;
 
-		for (nd = *hbits++; nd; nd--) {	/* Search the code word in this bit length */
-			if (v == *hcode++) {		/* Matched? */
-				jd->dmsk = msk; jd->dctr = dc; jd->dptr = dp;
-				return *hdata;			/* Return the decoded data */
-			}
-			hdata++;
+		/* Canonical codes of a given length are consecutive. Test their
+		 * range once instead of scanning up to 162 AC symbols per bit. */
+		nd = *hbits++;
+		if (nd && v >= *hcode && v - *hcode < nd) {
+			jd->dmsk = msk; jd->dctr = dc; jd->dptr = dp;
+			return hdata[v - *hcode];
 		}
+		hcode += nd;
+		hdata += nd;
 		bl--;
 	} while (bl);
 
@@ -569,6 +571,41 @@ static JRESULT mcu_output (
 	rect.left = x; rect.right = x + rx - 1;				/* Rectangular area in the frame buffer */
 	rect.top = y; rect.bottom = y + ry - 1;
 
+
+	/* Video uses full-scale RGB565. Convert straight from the MCU into
+	 * the packed output, avoiding an RGB888 pass and a second packing pass.
+	 * Chroma is shared by each horizontal pixel pair in 4:2:0 / 4:2:2. */
+	if (JD_FORMAT == 1 && jd->scale == 0) {
+		uint8_t *dst = (uint8_t *)jd->workbuf;
+		int red = 0, green = 0, blue = 0;
+		for (iy = 0; iy < ry; iy++) {
+			py = jd->mcubuf + iy * 8;
+			if (my == 16) {
+				pc = jd->mcubuf + 256 + (iy >> 1) * 8;
+				if (iy >= 8) py += 64;
+			} else {
+				pc = jd->mcubuf + mx * 8 + iy * 8;
+			}
+			for (ix = 0; ix < rx; ix++) {
+				if (mx == 16 && ix == 8) py += 56;
+				if (mx != 16 || !(ix & 1)) {
+					cb = pc[0] - 128;
+					cr = pc[64] - 128;
+					red = ((int)(1.402 * CVACC) * cr) / CVACC;
+					green = ((int)(0.344 * CVACC) * cb + (int)(0.714 * CVACC) * cr) / CVACC;
+					blue = ((int)(1.772 * CVACC) * cb) / CVACC;
+				}
+				pc += (mx == 16) ? (ix & 1) : 1;
+				yy = *py++;
+				uint16_t pixel = ((BYTECLIP(yy + red) & 0xF8) << 8)
+					| ((BYTECLIP(yy - green) & 0xFC) << 3)
+					| (BYTECLIP(yy + blue) >> 3);
+				*dst++ = pixel >> 8;
+				*dst++ = pixel & 0xFF;
+			}
+		}
+		return outfunc(jd, jd->workbuf, &rect) ? JDR_OK : JDR_INTR;
+	}
 
 	if (!JD_USE_SCALE || jd->scale != 3) {	/* Not for 1/8 scaling */
 

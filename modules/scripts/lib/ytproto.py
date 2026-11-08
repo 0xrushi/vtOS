@@ -7,6 +7,8 @@
 # Written to run on MicroPython and CPython (tests): no f-strings, no ljust.
 #
 
+import io
+
 MARKER = b"\xffYTSTRM1"
 MAX_PACKET = 64 * 1024
 
@@ -40,15 +42,19 @@ class Demux:
                 raise ValueError("bad packet length")
             if len(buf) - pos - 5 < size:
                 break
-            events.append((kind, bytes(buf[pos + 5:pos + 5 + size])))
+            # A bytearray slice followed by bytes() copied each JPEG twice.
+            events.append((kind, bytes(memoryview(buf)[pos + 5:pos + 5 + size])))
             pos += 5 + size
         if pos:
             self.buf = buf[pos:]
         return events
 
 
-class AudioPipe:
-    """Stream-like object for AudioPlayer.play(): MP3 chunks in, readinto out.
+class AudioPipe(io.IOBase):
+    """Stream object for AudioPlayer.play(): MP3 chunks in, readinto out.
+
+    Must subclass io.IOBase: the player's C code only accepts objects with the
+    MicroPython stream protocol, which IOBase subclasses get.
 
     readinto() returns None when nothing is queued (the player treats that as
     "no data yet", not end of stream)."""
@@ -79,6 +85,12 @@ class AudioPipe:
                 self.offset = 0
         self.size -= done
         return done
+
+    def close(self):
+        # AudioPlayer.stop() closes the stream it was playing.
+        self.chunks = []
+        self.offset = 0
+        self.size = 0
 
     def read(self, n=-1):
         buf = bytearray(n if n and n > 0 else self.size)
