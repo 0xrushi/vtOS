@@ -7,6 +7,9 @@ _ADDRESS = 0x55
 _RAW_MODE = b"\x03"
 _KEY_MODE = b"\x04"
 _BACKSPACE = 8
+_D_KEYS = (ord("d"), ord("D"))
+# Private byte the shell treats as "open the launcher" (Alt+D).
+LAUNCHER_KEY = 0x1D
 _POLLIN = 1
 _POLLOUT = 4
 _POLL = 3
@@ -44,6 +47,7 @@ class KeyboardRepeatTerminal(io.IOBase):
         self._matrix = bytearray(5)
         self._pending = None
         self._key_mode = True
+        self._alt = False
         self._held = self._read_held()
         self._last_state = time.ticks_ms()
 
@@ -56,6 +60,8 @@ class KeyboardRepeatTerminal(io.IOBase):
             # firmware returns a character plus padding instead; reject it.
             if any(value & 0x80 for value in self._matrix):
                 raise ValueError("Keyboard does not report held keys")
+            # ALT is column 0, row 4; Backspace is column 4, row 3.
+            self._alt = bool(self._matrix[0] & (1 << 4))
             return bool(self._matrix[4] & (1 << 3))
         finally:
             self.bus.writeto(_ADDRESS, _KEY_MODE)
@@ -79,13 +85,19 @@ class KeyboardRepeatTerminal(io.IOBase):
                 key = self._one[0]
 
         now = time.ticks_ms()
-        if key == _BACKSPACE or self.repeat.due(now) or time.ticks_diff(now, self._last_state) >= 20:
+        if key in _D_KEYS or key == _BACKSPACE or self.repeat.due(now) or time.ticks_diff(now, self._last_state) >= 20:
             try:
                 self._held = self._read_held()
             except (OSError, ValueError):
                 # A missing/failed state read must never sustain deletion.
                 self._held = False
+                self._alt = False
             self._last_state = now
+        if key in _D_KEYS and self._alt:
+            # The keyboard reports ALT only in its key matrix, not in the
+            # character stream, so Alt+D arrives as a plain "d".
+            self._pending = LAUNCHER_KEY
+            return
         self._pending = self.repeat.update(key, self._held, now)
 
     def readinto(self, buf):

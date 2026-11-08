@@ -81,6 +81,30 @@ During SSH, rolling up/down scrolls the T-Deck's local terminal history instead 
 
 Holding Backspace deletes once immediately, then repeats after 400 ms at 60 ms intervals. Releasing it stops repetition. This works locally and over SSH on keyboard firmware that supports raw held-key reporting; older controllers retain normal single-press behavior.
 
+### SSH profiles
+
+If `/flash/.ssh/config` (or `/sd/.ssh/config`) exists, `ssh` can use its `Host` entries, much like lazyssh. Run `ssh` with no arguments to pick a profile from the same minimal picker as the launcher, or `ssh <name>` to connect directly. Without a config, `ssh <host> [port] [user] [password]` works as before.
+
+```
+Host *
+    User admin
+
+Host pi
+    HostName 192.168.1.50
+    User pi
+    Password raspberry   # optional; omit to be asked at connect time
+
+Host work
+    HostName dev.example.com
+    Port 2222
+```
+
+Supported keys are `Host` (several aliases and a `Host *` defaults block), `HostName`, `Port`, `User`, and a vtOS-specific `Password` (the client only supports password login). A stored password is plain text on the device, so leave it out if you'd rather type it.
+
+### App launcher
+
+Press **Alt+D** at the shell prompt to open a minimal, rofi-style launcher. Type to filter apps (favs from `fav` are listed first), roll the trackball up/down to move the selection, and press Enter to run. Esc, Alt+D again, or a long trackball press dismisses it. It can also be started with the `launcher` command. Alt+D needs keyboard firmware that reports held keys (the same requirement as Backspace repeat).
+
 ### Available commands
 
 You can execute the following commands from the built-in shell:
@@ -116,6 +140,7 @@ You can execute the following commands from the built-in shell:
 | `sftp` | SFTP Client that mounts its content as a VFS |
 | `sftpd` | SFTP Server; runs in the background |
 | `smtp` | SMTP email client; compose in `vi` and send with `smtp <host> <user> <password> [port]` |
+| `neofetch` | System summary: OS, uptime, CPU and temperature, heap/PSRAM, flash/SD usage, battery, network. Also in the Alt+D launcher. |
 | `ssh` | SSH Client; connect to a remote ssh server |
 | `sshd` | SSH Server; runs in the background, shares this device's shell. |
 | `stream` | Streams internet radio (MP3 over HTTP); pass a URL, or use `menu stream` for saved stations |

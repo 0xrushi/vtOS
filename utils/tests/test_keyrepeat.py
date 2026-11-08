@@ -46,6 +46,7 @@ class NativeTerminal:
 class KeyboardBus:
     def __init__(self):
         self.held = False
+        self.alt = False
         self.fail = False
         self.mode = b"\x04"
         self.invalid = False
@@ -58,7 +59,7 @@ class KeyboardBus:
         assert address == 0x55 and self.mode == b"\x03"
         if self.fail:
             raise OSError("read failed")
-        buf[:] = bytes([0, 0, 0, 0, 8 if self.held else 0])
+        buf[:] = bytes([16 if self.alt else 0, 0, 0, 0, 8 if self.held else 0])
         if self.invalid:
             buf[:] = b"\x00\xff\xff\xff\xff"
 
@@ -183,3 +184,28 @@ def test_repeat_deadline_handles_clock_wrap(keyboard):
     assert repeat.update(8, True, 3900) == 8
     assert repeat.update(None, True, 203) is None
     assert repeat.update(None, True, 204) == 8
+
+
+def test_alt_d_becomes_launcher_key(keyboard):
+    terminal, native, bus, clock = make_terminal(keyboard)
+    bus.alt = True
+    native.keys = [ord("d")]
+    assert read_key(terminal) == 0x1D
+    assert read_key(terminal) is None
+
+
+def test_plain_d_and_alt_with_other_keys_pass_through(keyboard):
+    terminal, native, bus, clock = make_terminal(keyboard)
+    native.keys = [ord("d")]
+    assert read_key(terminal) == ord("d")
+    bus.alt = True
+    native.keys = [ord("a")]
+    assert read_key(terminal) == ord("a")
+
+
+def test_failed_state_read_never_launches(keyboard):
+    terminal, native, bus, clock = make_terminal(keyboard)
+    bus.alt = True
+    bus.fail = True
+    native.keys = [ord("d")]
+    assert read_key(terminal) == ord("d")

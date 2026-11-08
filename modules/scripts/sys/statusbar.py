@@ -17,6 +17,32 @@ BT     = chr(0xE00B).encode()
 SPKR   = chr(0xE152).encode()
 BAT    = chr(0xE033).encode()
 
+# Palette (xterm-256), shared with the launcher: a quiet dark bar, soft
+# per-item accent colours, and traffic-light state colours. The dynamic
+# colours are all 3 digits so they can be swapped in place in the buffer.
+BAR_BG  = 235
+TEXT    = 252
+DIM     = 244
+C_UP    = 110   # uptime icon: soft blue
+C_MEM   = 179   # memory icon: amber
+GREEN   = b"114"
+YELLOW  = b"221"
+RED     = b"203"
+GREY    = b"244"
+
+
+def _fg(code):
+    return b"\033[38;5;" + (code if isinstance(code, bytes) else str(code).encode()) + b"m"
+
+
+def _battery_color(pct):
+    if pct >= 50:
+        return GREEN
+    if pct >= 20:
+        return YELLOW
+    return RED
+
+
 class StatusBar:
 
     def __init__(self, env):
@@ -25,15 +51,16 @@ class StatusBar:
         self.wlan = network.WLAN(network.STA_IF)
         self.bat_pin = hardware.init_bat()
 
-        self.style = b"\033[38;5;0m\033[48;5;252m"
+        self.style = _fg(TEXT) + ("\033[48;5;%dm" % BAR_BG).encode()
         self.clear = b"\033[0m"
 
         # Notification overlay state -- see notify().
         self._notify_text = None
         self._notify_until = 0
-        # White on a warm, desaturated red (#d75f5f) -- reads clearly as
-        # an alert without the eye-strain of a saturated red like 196.
-        self._notify_style = b"\033[38;5;255m\033[48;5;167m"
+        # Dark text on a soft blue (#87afd7): clearly distinct from the
+        # bar, readable, and not an alarming red for routine events such
+        # as "sshd: connected".
+        self._notify_style = _fg(BAR_BG) + b"\033[48;5;110m"
 
         # Initialize the layout and calculate offsets dynamically via the new method
         self.update_width(env.cols)
@@ -65,15 +92,32 @@ class StatusBar:
             offsets[name] = sum(len(s) for s in segments)
             text(placeholder)
 
+        def color(code):
+            # Zero-width: colours take bytes, not terminal columns.
+            segments.append(_fg(code))
+
+        def cfield(name, default):
+            # A colour whose 3-digit code is rewritten in place on refresh.
+            segments.append(b"\033[38;5;")
+            offsets[name] = sum(len(s) for s in segments)
+            segments.append(default + b"m")
+
         # Left: uptime, mem, wifi
+        color(C_UP)
         icon(UPTIME)
+        color(TEXT)
         field('up_min', b'00')   # minutes, 2 digits (was 1 -- wrapped at 10m before)
+        color(DIM)
         text(b'm')
+        color(TEXT)
         field('up_sec', b'00')   # seconds, 2 digits
         text(b' ')
+        color(C_MEM)
         icon(MEM)
+        color(TEXT)
         field('mem', b'0.0M')  # digit/./digit/unit below 10, digit/digit/unit at 10+ (no decimal then)
         text(b' ')
+        cfield('wifi_c', GREY)
         icon(WIFI)
         field('wifi', b'OFF')
 
@@ -84,14 +128,19 @@ class StatusBar:
         # see env.ble / hardware.init_ble), speaker volume, battery
         segments = []
         cols = 0
+        cfield('ble_c', GREY)
         icon(BT)
         field('ble', b'OFF')
         text(b' ')
+        cfield('vol_c', GREY)
         icon(SPKR)
         field('vol', b'  0')
+        color(DIM)
         text(b'% ')
+        cfield('bat_c', GREEN)
         icon(BAT)
         field('bat', b'  0')
+        color(DIM)
         text(b'%')
 
         right = b''.join(segments)
@@ -116,6 +165,10 @@ class StatusBar:
         self.off_ble    = right_base + offsets['ble']
         self.off_vol    = right_base + offsets['vol']
         self.off_bat    = right_base + offsets['bat']
+        self.off_wifi_c = s_len + offsets['wifi_c']
+        self.off_ble_c  = right_base + offsets['ble_c']
+        self.off_vol_c  = right_base + offsets['vol_c']
+        self.off_bat_c  = right_base + offsets['bat_c']
 
     def _write_at(self, offset, data):
         """Helper to overwrite a slice of the buffer"""
@@ -232,6 +285,7 @@ class StatusBar:
         bt = (pct // 10) % 10
         bu = pct % 10
 
+        self._write_at(self.off_bat_c, _battery_color(pct))
         self.buffer[self.off_bat]     = 48 + bh if bh > 0 else 32
         self.buffer[self.off_bat + 1] = 48 + bt if (bt > 0 or bh > 0) else 32
         self.buffer[self.off_bat + 2] = 48 + bu
@@ -242,6 +296,7 @@ class StatusBar:
         # crashing on a None.
         if self.env.audio is not None:
             vol = self.env.audio.volume()
+            self._write_at(self.off_vol_c, GREEN)
             vh = (vol // 100) % 10
             vt = (vol // 10) % 10
             vu = vol % 10
@@ -249,19 +304,24 @@ class StatusBar:
             self.buffer[self.off_vol + 1] = 48 + vt if (vt > 0 or vh > 0) else 32
             self.buffer[self.off_vol + 2] = 48 + vu
         else:
+            self._write_at(self.off_vol_c, GREY)
             self.buffer[self.off_vol : self.off_vol + 3] = b'   '
 
         # WiFi Status
         if self.wlan.isconnected():
+            self._write_at(self.off_wifi_c, GREEN)
             self.buffer[self.off_wifi : self.off_wifi + 3] = b"ON "
         else:
+            self._write_at(self.off_wifi_c, GREY)
             self.buffer[self.off_wifi : self.off_wifi + 3] = b"OFF"
 
         # BLE Mesh Status -- env.ble is lazy (see hardware.init_ble),
         # None until blechat has actually been run this boot.
         if self.env.ble is not None:
+            self._write_at(self.off_ble_c, GREEN)
             self.buffer[self.off_ble : self.off_ble + 3] = b"ON "
         else:
+            self._write_at(self.off_ble_c, GREY)
             self.buffer[self.off_ble : self.off_ble + 3] = b"OFF"
 
         # Push to Terminal

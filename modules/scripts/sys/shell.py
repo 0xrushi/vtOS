@@ -80,6 +80,8 @@ class Shell:
         self.register("webvncd",     _app("bin.webvncd"))
         self.register("vncd",        _app("bin.vncd"))
         self.register("chess",       _app("bin.chess"))
+        self.register("launcher",    _app("bin.launcher"))
+        self.register("neofetch",    _app("bin.neofetch"))
         self.register("c2",          _app("bin.c2"))
         self.register("ftp",         _app("bin.ftp"))
         self.register("ftpd",        _app("bin.ftpd"))
@@ -285,6 +287,17 @@ class Shell:
             print(f"{cmd_name}: command not found")
             return False
 
+    def _launch(self):
+        """Alt+D launcher: returns the chosen command or None."""
+        try:
+            launcher = __import__("bin.launcher", None, None, [""])
+            return launcher.pick(
+                self.env, launcher.build_entries(self.apps, self.aliases))
+        except Exception as e:
+            print("\r\n[!] Launcher error:")
+            sys.print_exception(e)
+            return None
+
     def _read_line(self, prompt):
         print(prompt, end="")
         buffer = ""
@@ -306,6 +319,15 @@ class Shell:
                 # then exit so it can handle the raw REPL handshake.
                 self.env.kvm.inject('\x01')
                 raise EOFError
+
+            if char == '\x1d':
+                # Alt+D (see lib/keyrepeat.py): rofi-style app launcher.
+                choice = self._launch()
+                if choice:
+                    print(prompt + choice + "\r")
+                    return choice
+                print(prompt + buffer, end="")
+                continue
 
             if char == '\x1b':
                 # Consume ESC [ A/B/C/D sequences (3 bytes total). These
