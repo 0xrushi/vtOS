@@ -27,6 +27,12 @@ This project is optimized for the **LilyGO T-Deck**.
 | **Microphone** | I2S, ES7210 ADC | ❌ Noise issues |
 | **Touchscreen** | GT911 | N/A |
 
+### T-Deck Plus keyboard input
+
+The Plus connects its GPS to GPIO 43/44, which are also the default UART0 console pins. With the UART REPL enabled, GPS traffic can corrupt terminal input and make the keyboard appear unresponsive. This board definition disables the UART REPL; USB and the on-device keyboard remain available.
+
+For an existing firmware release with this problem, add the contents of [`utils/tdeck_plus_uart_fix.py`](utils/tdeck_plus_uart_fix.py) to `/flash/main.py`, preserving any existing startup code, and restart. This startup workaround masks UART0 receive interrupts without reflashing the firmware. It is not needed after installing firmware built with the updated board definition.
+
 
 ## ⚡ Quick Install (Pre-compiled Binaries)
 
@@ -68,6 +74,12 @@ This firmware is fully compatible with [Launcher](https://bmorcelli.github.io/La
 - **Scroll down**: Scroll down st terminal history
 - **Scroll left**: Scroll up st command history
 - **Scroll right**: Scroll down st command history
+
+During SSH, rolling up/down scrolls the T-Deck's local terminal history instead of sending arrow keys to the remote prompt. This lets you read previous output in plain terminal interfaces such as Claude Code's screen-reader mode. Left/right still send arrow keys, and normal local navigation resumes when SSH exits.
+
+### Backspace repeat
+
+Holding Backspace deletes once immediately, then repeats after 400 ms at 60 ms intervals. Releasing it stops repetition. This works locally and over SSH on keyboard firmware that supports raw held-key reporting; older controllers retain normal single-press behavior.
 
 ### Available commands
 

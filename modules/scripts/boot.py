@@ -7,7 +7,8 @@ import env
 import hardware
 import modvt
 import tdeck_kvm
-import tdeck_trk
+import trackball
+import keyrepeat
 import statusbar
 import shell
 import defaults
@@ -33,6 +34,7 @@ env.kvm = tdeck_kvm.KVM(env.term, kbd)
 
 # Redirect to REPL
 os.dupterm(env.kvm)
+keyrepeat.install(env)
 
 # Write the MicroPython prompt in red
 sys.stdout.write("\x1b[38;5;210m")
@@ -43,29 +45,7 @@ env.sts.refresh()
 
 # The FAST loop (30ms)
 def scheduled_fast(_):
-
-    # Trackball horizontal movement injects Left/Right arrow keys
-    # mapped to navigating command history
-    h_delta = tdeck_trk.get_scroll_horiz()
-    if abs(h_delta) > 1:
-        if h_delta < 0:
-            env.kvm.inject("\x1b[D") # Left: older command
-        else:
-            env.kvm.inject("\x1b[C") # Right: newer command
-
-    # Trackball vertical movement injects Up/Down arrow keys
-    # mapped to navigating shell history
-    v_delta = tdeck_trk.get_scroll_vert()
-    if abs(v_delta) > 1:
-        if v_delta < 0:
-            env.kvm.inject("\x1b[B") # Down
-        else:
-            env.kvm.inject("\x1b[A") # Up
-
-    # Long clicking will raise KeyboardInterrupt (internally to tdeck_trk)
-    # Short click will inject escape
-    if tdeck_trk.get_click():
-        env.kvm.inject("\x1b")
+    trackball.poll(env)
 
     # Skip this tick's redraw rather than racing an in-flight SD transfer
     # that has the shared SPI bus temporarily parked at SD_BAUDRATE.

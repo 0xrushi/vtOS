@@ -11,6 +11,7 @@ class Environment:
         self.icon_font = None
         self.icon_font_name = None
         self.kvm = None
+        self.ssh_scrollback = False
         self.tui = None
         self.term = None
         self.sts = None

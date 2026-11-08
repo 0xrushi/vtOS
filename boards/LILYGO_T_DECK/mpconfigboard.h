@@ -1,7 +1,10 @@
 #define MICROPY_HW_BOARD_NAME "LILYGO T-Deck"
 #define MICROPY_HW_MCU_NAME "ESP32S3"
 
-#define MICROPY_HW_ENABLE_UART_REPL (1)
+// UART0 uses GPIO 43/44, which are connected to GPS on the T-Deck Plus.
+// Receiving GPS bytes as console input corrupts keyboard/USB terminal input.
+// Keep the REPL on USB and the on-device keyboard instead.
+#define MICROPY_HW_ENABLE_UART_REPL (0)
 
 // Default is 16*1024 (mpconfigport.h) -- too small for codec2_create()'s
 // deep DSP init (FFT/LPC/quantiser table setup). Overflowing mp_task's

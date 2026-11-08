@@ -49,13 +49,18 @@ class SSHSession:
 
     def process(self):
         inbuf = bytearray(_READ_CHUNK)
+        # SSH carries terminal bytes unchanged. MicroPython's text stdin turns
+        # Enter (CR) into LF, which TUIs can interpret as an inserted newline.
+        # Text stdout also expands LF to CRLF, corrupting remote line endings.
+        stdin = sys.stdin.buffer
+        stdout = sys.stdout.buffer
 
         while self.connected:
             if self.client.status() != modssh.CONNECTED:
                 break
 
             sock_ready, _, _ = select.select([self.client], [], [], 0)
-            stdin_ready, _, _ = select.select([sys.stdin], [], [], 0)
+            stdin_ready, _, _ = select.select([stdin], [], [], 0)
             if not sock_ready and not stdin_ready:
                 time.sleep_ms(10)
 
@@ -65,19 +70,15 @@ class SSHSession:
                 except OSError:
                     n = 0
                 if n:
-                    sys.stdout.write(inbuf[:n])
-                    try:
-                        sys.stdout.flush()
-                    except AttributeError:
-                        pass
+                    stdout.write(inbuf[:n])
 
             if stdin_ready:
-                char = sys.stdin.read(1)
+                char = stdin.read(1)
                 if char:
-                    if ord(char) == 0x1d:  # Ctrl-]: matches telnet-style escape
+                    if char == b'\x1d':  # Ctrl-]: matches telnet-style escape
                         break
                     try:
-                        self.client.write(char.encode())
+                        self.client.write(char)
                     except OSError:
                         pass  # tx ring buffer momentarily full; drop and retry next key
 
@@ -103,4 +104,9 @@ def main(env, args):
         print(f"ssh: {e}")
         return
 
-    session.run()
+    previous_scrollback = getattr(env, "ssh_scrollback", False)
+    env.ssh_scrollback = True
+    try:
+        session.run()
+    finally:
+        env.ssh_scrollback = previous_scrollback
