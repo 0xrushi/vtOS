@@ -7,3 +7,7 @@ __pycache__/
 
 # local device backups (may hold personal files and saved logins)
 flash-backup/
+
+# local working notes, not pushed
+TODO.md
+summary.md

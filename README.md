@@ -344,3 +344,9 @@ This project's source code is licensed under the **MIT License**. However, if yo
 the decoding: it streams 320x240 JPEG frames and MP3 audio, the T-Deck draws
 and plays them. Setup, protocol and limits are in
 [tools/ytstream/README.md](tools/ytstream/README.md).
+
+## Dual boot and feature status
+
+- How the dual-boot loader works, why it exists, and the flash commands:
+  [utils/dualboot/README.md](utils/dualboot/README.md).
+- What is supported and what is missing: [FEATURES.md](FEATURES.md).

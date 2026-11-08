@@ -1,0 +1,409 @@
+diff --git a/examples/ofdm_tx/CMakeLists.txt b/examples/ofdm_tx/CMakeLists.txt
+index a69d94a..18aa832 100644
+--- a/examples/ofdm_tx/CMakeLists.txt
++++ b/examples/ofdm_tx/CMakeLists.txt
+@@ -1,6 +1,6 @@
+ cmake_minimum_required(VERSION 3.16)
+ set(PROJECT_VER "0.1.0")
+ set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../firmware")
+-set(COMPONENTS main)
++set(COMPONENTS main esp_driver_gpio esp_driver_spi esp_driver_i2c esp_driver_usb_serial_jtag)
+ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+ project(ofdm_tx)
+diff --git a/examples/ofdm_tx/main/CMakeLists.txt b/examples/ofdm_tx/main/CMakeLists.txt
+index 265dd2f..550b29f 100644
+--- a/examples/ofdm_tx/main/CMakeLists.txt
++++ b/examples/ofdm_tx/main/CMakeLists.txt
+@@ -1,11 +1,17 @@
++# NOTE: ESP-IDF evaluates this file once in a separate early-expansion
++# process (cmake -P) that does NOT see -DIQ_TX_EXAMPLE, so it always takes the
++# first branch to collect REQUIRES. Every branch must therefore list the same
++# REQUIRES, or component dependencies silently go missing from the build.
+ if(NOT DEFINED IQ_TX_EXAMPLE OR IQ_TX_EXAMPLE STREQUAL "ofdm_tx")
+     set(wave_dir "${CMAKE_CURRENT_LIST_DIR}/../waves/${IDF_TARGET}")
+     idf_component_register(SRCS "main.c" INCLUDE_DIRS "."
+-        REQUIRES firmware console freertos
++        REQUIRES firmware console freertos esp_driver_gpio esp_driver_spi esp_driver_i2c
+         EMBED_FILES "${wave_dir}/qpsk.bin" "${wave_dir}/qam16.bin")
+ elseif(IQ_TX_EXAMPLE STREQUAL "sample_rates" OR IQ_TX_EXAMPLE STREQUAL "basic")
+     idf_component_register(SRCS "${CMAKE_CURRENT_LIST_DIR}/../../${IQ_TX_EXAMPLE}/main.c"
+-        REQUIRES firmware console freertos)
++        "${CMAKE_CURRENT_LIST_DIR}/../../${IQ_TX_EXAMPLE}/display_min.c"
++        INCLUDE_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../${IQ_TX_EXAMPLE}"
++        REQUIRES firmware console freertos esp_driver_gpio esp_driver_spi esp_driver_i2c)
+ else()
+     message(FATAL_ERROR "Unknown IQ_TX_EXAMPLE")
+ endif()
+diff --git a/examples/sample_rates/main.c b/examples/sample_rates/main.c
+index dbf0f2f..bb655f1 100644
+--- a/examples/sample_rates/main.c
++++ b/examples/sample_rates/main.c
+@@ -1,64 +1,339 @@
+ /* SPDX-License-Identifier: GPL-3.0-or-later
+- * A fixed 64-sample circle demonstrates native sample rate selection.
+- * Its RF offset is Fs/64: changing Fs changes the actual transmitted tone.
++ * IQ lab on the T-Deck: native sample rate + arbitrary tone offset.
++ *
++ * The RF SRAM holds a looped IQ waveform of N samples (N multiple of the
++ * hardware loop alignment, up to max_samples) containing m whole turns of
++ * a circle. The transmitted offset from the channel centre is
++ *
++ *     offset = Fs * m / N
++ *
++ * "tone <Msps> [offset_MHz]" picks the (N, m) pair closest to the request.
++ * Commands come from the USB serial console and from the T-Deck keyboard
++ * (I2C 0x55) typed on the on-screen input line.
+  */
+ #include <inttypes.h>
+ #include <math.h>
++#include <stdarg.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <string.h>
++#include "driver/i2c_master.h"
+ #include "esp_console.h"
++#include "freertos/FreeRTOS.h"
++#include "freertos/semphr.h"
++#include "freertos/task.h"
+ #include "iq_tx.h"
++#include "display_min.h"
++
++#define AMPLITUDE 64
++#define KBD_ADDR 0x55
++#define KBD_SDA 18
++#define KBD_SCL 8
++#define INPUT_MAX 40
++#define INPUT_SHOWN 17
++#define COLOR_YELLOW RGB565(240, 200, 60)
++
++static uint32_t tone[16128];
++
++static SemaphoreHandle_t g_lock;
++static int g_playing_msps;
++static double g_offset_mhz;
++static unsigned g_n;
++static int g_m;
++static char g_msg[48];
++static char g_input[INPUT_MAX + 1];
++static size_t g_input_len;
++
++static void lock(void)
++{
++    xSemaphoreTakeRecursive(g_lock, portMAX_DELAY);
++}
++
++static void unlock(void)
++{
++    xSemaphoreGiveRecursive(g_lock);
++}
++
++static void set_msg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
++static void set_msg(const char *fmt, ...)
++{
++    va_list ap;
++    va_start(ap, fmt);
++    vsnprintf(g_msg, sizeof(g_msg), fmt, ap);
++    va_end(ap);
++}
++
++static void draw_input(void)
++{
++    lock();
++    display_rect(0, 204, 320, 20, COLOR_BLACK);
++    char line[INPUT_MAX + 4];
++    const char *tail = g_input;
++    if (g_input_len > INPUT_SHOWN - 1) {
++        tail = g_input + (g_input_len - (INPUT_SHOWN - 1));
++    }
++    snprintf(line, sizeof(line), ">%s_", tail);
++    display_text(4, 206, line, COLOR_WHITE, COLOR_BLACK, 2);
++    unlock();
++}
++
++static void ui_draw(void)
++{
++    lock();
++    display_rect(0, 0, 320, 240, COLOR_BLACK);
++    display_text(88, 12, "iq lab", COLOR_CYAN, COLOR_BLACK, 3);
++    char line[48];
++    unsigned center = 2412u + 5u * (unsigned)(CONFIG_EXAMPLE_TX_CHANNEL - 1);
++    snprintf(line, sizeof(line), "ch %d  %u MHz", (int)CONFIG_EXAMPLE_TX_CHANNEL, center);
++    display_text(8, 54, line, COLOR_WHITE, COLOR_BLACK, 2);
++    snprintf(line, sizeof(line), "backoff %d qdB", (int)CONFIG_EXAMPLE_RF_BACKOFF_QDB);
++    display_text(8, 76, line, COLOR_DIM, COLOR_BLACK, 2);
++    if (g_playing_msps) {
++        snprintf(line, sizeof(line), "TX ON %dM %+.3f MHz", g_playing_msps, g_offset_mhz);
++        display_text(8, 108, line, COLOR_GREEN, COLOR_BLACK, 2);
++        snprintf(line, sizeof(line), "nominal %.3f MHz  N%u m%d",
++                 (double)center + g_offset_mhz, g_n, g_m);
++        display_text(8, 132, line, COLOR_DIM, COLOR_BLACK, 1);
++        display_text(8, 144, "HackRF: carrier reads ~0.14 MHz low", COLOR_DIM, COLOR_BLACK, 1);
++    } else {
++        display_text(8, 108, "TX off", COLOR_DIM, COLOR_BLACK, 2);
++    }
++    display_text(8, 176, g_msg, COLOR_YELLOW, COLOR_BLACK, 1);
++    display_text(8, 232, "tone <40|80> [MHz]   stop", COLOR_DIM, COLOR_BLACK, 1);
++    draw_input();
++    unlock();
++}
++
++/* Nearest (N, m) to the requested offset. N: multiples of the hardware loop
++ * alignment up to max_samples; m: whole turns, |m| < N/2 (below Nyquist).
++ * Ties prefer the shorter loop. */
++static void plan_tone(double fs_hz, double offset_hz, unsigned *n_out, int *m_out, double *actual_hz)
++{
++    const iq_tx_caps_t *caps = iq_tx_capabilities();
++    unsigned align = (unsigned)caps->loop_alignment_samples;
++    unsigned max_n = (unsigned)caps->max_samples;
++    double best_err = 1e30;
++    unsigned best_n = align;
++    int best_m = 0;
++    for (unsigned n = align; n <= max_n; n += align) {
++        long m = lround(offset_hz * (double)n / fs_hz);
++        long lim = (long)(n / 2) - 1;
++        if (m > lim) {
++            m = lim;
++        }
++        if (m < -lim) {
++            m = -lim;
++        }
++        double err = fabs(fs_hz * (double)m / (double)n - offset_hz);
++        if (err < best_err) {
++            best_err = err;
++            best_n = n;
++            best_m = (int)m;
++            if (err < 1.0) {
++                break;
++            }
++        }
++    }
++    *n_out = best_n;
++    *m_out = best_m;
++    *actual_hz = fs_hz * (double)best_m / (double)best_n;
++}
++
++static void fill_tone(unsigned n, int m)
++{
++    for (unsigned k = 0; k < n; ++k) {
++        long r = ((long)m * (long)k) % (long)n;
++        if (r < 0) {
++            r += (long)n;
++        }
++        float phase = 2.0f * 3.14159265358979323846f * (float)r / (float)n;
++        tone[k] = iq_tx_pack((int16_t)lroundf(AMPLITUDE * cosf(phase)),
++                             (int16_t)lroundf(AMPLITUDE * sinf(phase)));
++    }
++}
++
++static int fail_msg(int ret)
++{
++    lock();
++    ui_draw();
++    unlock();
++    return ret;
++}
+ 
+-static uint32_t tone[1024];
+ static int stop_cmd(int argc, char **argv)
+ {
+     (void)argc;
+     (void)argv;
+-    return iq_tx_stop() != ESP_OK;
++    lock();
++    esp_err_t err = iq_tx_stop();
++    g_playing_msps = 0;
++    set_msg("stopped");
++    ui_draw();
++    unlock();
++    return err != ESP_OK;
+ }
++
+ static int tone_cmd(int argc, char **argv)
+ {
+-    if (argc != 2) {
+-        return 1;
++    if (argc < 2 || argc > 3) {
++        set_msg("usage: tone <40|80> [MHz]");
++        return fail_msg(1);
+     }
+     char *end;
+     unsigned long mhz = strtoul(argv[1], &end, 10);
+-    if (*end || mhz > 80) {
+-        return 1;
++    if (*end || (mhz != 40 && mhz != 80)) {
++        set_msg("rate must be 40 or 80");
++        return fail_msg(1);
++    }
++    double fs = (double)mhz * 1e6;
++    double want_hz = fs / 64.0; /* default: the original Fs/64 tone */
++    if (argc == 3) {
++        want_hz = strtod(argv[2], &end) * 1e6;
++        if (*end) {
++            set_msg("bad offset: %s", argv[2]);
++            return fail_msg(1);
++        }
+     }
++    if (fabs(want_hz) >= fs / 2.0) {
++        set_msg("|offset| must be < %.0f MHz", (double)mhz / 2.0);
++        return fail_msg(1);
++    }
++
++    unsigned n;
++    int m;
++    double actual_hz;
++    plan_tone(fs, want_hz, &n, &m, &actual_hz);
++
++    lock();
++    fill_tone(n, m);
+     esp_err_t err = iq_tx_stop();
+     if (err == ESP_OK) {
+-        err = iq_tx_set_sample_rate((uint32_t)mhz * 1000000);
++        err = iq_tx_set_sample_rate((uint32_t)fs);
+     }
+     if (err == ESP_OK) {
+-        err = iq_tx_load(tone, 1024);
++        err = iq_tx_load(tone, n);
+     }
+     if (err == ESP_OK) {
+         err = iq_tx_start_loop();
+     }
+-    printf("tone: %s rate=%" PRIu32 " Hz expected_offset=%" PRIu32 " Hz\n",
+-           esp_err_to_name(err),
+-           iq_tx_capabilities()->sample_rate_hz,
+-           iq_tx_capabilities()->sample_rate_hz / 64);
++    if (err == ESP_OK) {
++        g_playing_msps = (int)mhz;
++        g_offset_mhz = actual_hz / 1e6;
++        g_n = n;
++        g_m = m;
++        set_msg("ok  asked %+.3f got %+.3f MHz", want_hz / 1e6, actual_hz / 1e6);
++    } else {
++        g_playing_msps = 0;
++        set_msg("tone failed: %s", esp_err_to_name(err));
++    }
++    ui_draw();
++    unlock();
++    printf("tone: %s rate=%lu Hz N=%u m=%d asked=%+.0f Hz nominal_offset=%+.0f Hz\n",
++           esp_err_to_name(err), (unsigned long)fs, n, m, want_hz, actual_hz);
+     return err != ESP_OK;
+ }
++
++/* ---- T-Deck keyboard (I2C 0x55, one ASCII byte per read, 0 = none) ---- */
++
++static i2c_master_dev_handle_t g_kbd;
++
++static esp_err_t keyboard_init(void)
++{
++    i2c_master_bus_config_t bus_cfg = {
++        .clk_source = I2C_CLK_SRC_DEFAULT,
++        .i2c_port = I2C_NUM_0,
++        .sda_io_num = KBD_SDA,
++        .scl_io_num = KBD_SCL,
++        .glitch_ignore_cnt = 7,
++        .flags.enable_internal_pullup = true,
++    };
++    i2c_master_bus_handle_t bus;
++    esp_err_t err = i2c_new_master_bus(&bus_cfg, &bus);
++    if (err != ESP_OK) {
++        return err;
++    }
++    i2c_device_config_t dev_cfg = {
++        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
++        .device_address = KBD_ADDR,
++        .scl_speed_hz = 400000,
++    };
++    return i2c_master_bus_add_device(bus, &dev_cfg, &g_kbd);
++}
++
++static void run_input_line(void)
++{
++    g_input[g_input_len] = '\0';
++    if (g_input_len == 0) {
++        return;
++    }
++    char cmd[INPUT_MAX + 1];
++    memcpy(cmd, g_input, g_input_len + 1);
++    g_input_len = 0;
++    g_input[0] = '\0';
++    set_msg("> %s", cmd);
++    int ret = 0;
++    esp_err_t err = esp_console_run(cmd, &ret);
++    if (err == ESP_ERR_NOT_FOUND) {
++        set_msg("unknown: %s", cmd);
++    } else if (err == ESP_ERR_INVALID_ARG) {
++        set_msg("empty command");
++    }
++    lock();
++    ui_draw();
++    unlock();
++}
++
++static void keyboard_task(void *arg)
++{
++    (void)arg;
++    for (;;) {
++        uint8_t key = 0;
++        if (i2c_master_receive(g_kbd, &key, 1, 10) == ESP_OK && key != 0) {
++            if (key == '\r' || key == '\n') {
++                run_input_line();
++            } else if (key == 0x08 || key == 0x7f) {
++                if (g_input_len) {
++                    g_input[--g_input_len] = '\0';
++                    draw_input();
++                }
++            } else if (key >= 32 && key < 127 && g_input_len < INPUT_MAX) {
++                g_input[g_input_len++] = (char)key;
++                g_input[g_input_len] = '\0';
++                draw_input();
++            }
++        }
++        vTaskDelay(pdMS_TO_TICKS(20));
++    }
++}
++
+ void app_main(void)
+ {
+     setvbuf(stdout, NULL, _IONBF, 0);
++    g_lock = xSemaphoreCreateRecursiveMutex();
++    display_init();
++    ui_draw();
+     const iq_tx_config_t config = {.channel = CONFIG_EXAMPLE_TX_CHANNEL,
+                                    .rf_backoff_qdb = CONFIG_EXAMPLE_RF_BACKOFF_QDB};
+     ESP_ERROR_CHECK(iq_tx_init(&config));
+-    for (unsigned n = 0; n < 1024; ++n) {
+-        float phase = 2 * 3.14159265358979323846f * (n % 64) / 64;
+-        tone[n] =
+-            iq_tx_pack((int16_t)lroundf(64 * cosf(phase)), (int16_t)lroundf(64 * sinf(phase)));
+-    }
++    set_msg("ready");
++    ui_draw();
++
+     const iq_tx_caps_t *caps = iq_tx_capabilities();
+     printf("%s supported native rates (Msps):", caps->chip);
+     for (size_t n = 0; n < caps->num_sample_rates; ++n) {
+         printf(" %" PRIu32, caps->supported_sample_rates_hz[n] / 1000000);
+     }
+-    printf("\nCommands: tone <Msps>, stop. Boot state: stopped.\n");
++    printf("\nloop: N multiple of %u up to %u samples\n",
++           (unsigned)caps->loop_alignment_samples, (unsigned)caps->max_samples);
++    printf("Commands: tone <Msps> [offset_MHz], stop. Boot state: stopped.\n");
++
++    if (keyboard_init() == ESP_OK) {
++        xTaskCreate(keyboard_task, "kbd", 4096, NULL, 4, NULL);
++    } else {
++        set_msg("keyboard init failed");
++        ui_draw();
++    }
++
+     esp_console_repl_t *repl;
+     esp_console_repl_config_t rc = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
+     rc.prompt = "rates>";
+@@ -68,7 +343,7 @@ void app_main(void)
+     ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&usb, &rc, &repl));
+     const esp_console_cmd_t commands[] = {
+         {.command = "tone",
+-         .help = "Native Fs in Msps: S3 40/80; S31 16/32/40/80",
++         .help = "tone <Msps> [offset_MHz]: S3 rates 40/80; offset +/- below Fs/2",
+          .func = tone_cmd},
+         {.command = "stop", .help = "Stop playback", .func = stop_cmd},
+     };

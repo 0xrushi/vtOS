@@ -1,0 +1,7 @@
+# Build-time table for the esp32-iq-tx lab payload: the app links at
+# the offset it occupies in the vtOS dual-boot runtime table
+# (utils/dualboot/partitions-dual.csv: ota_1 @ 0x510000).
+# Name,   Type, SubType,  Offset,   Size,      Flags
+nvs,      data, nvs,      0x9000,   0x4000,
+otadata,  data, ota,      0xd000,   0x2000,
+iqlab,    app,  factory,  0x510000, 0x100000,

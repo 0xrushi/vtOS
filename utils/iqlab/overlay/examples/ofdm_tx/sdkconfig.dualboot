@@ -1,0 +1,8 @@
+# esp32-iq-tx lab payload -- vtOS dual-boot overlay (ota_1 @ 0x510000)
+# Layered after sdkconfig.defaults + sdkconfig.defaults.esp32s3.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-iqlab.csv"
+# payloads stay pending-verify so every reset rolls back to the loader
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_ESP_PHY_ENABLE_CERT_TEST=y
