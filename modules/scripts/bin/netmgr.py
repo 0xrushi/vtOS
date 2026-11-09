@@ -7,6 +7,36 @@
 import sys
 import time
 import network
+import modwifi
+import wificonfig
+
+
+def connect(wlan, ssid, password, progress):
+    wlan.active(True)
+    if wlan.isconnected():
+        wlan.disconnect()
+        time.sleep(0.5)
+    try:
+        wlan.connect(ssid, password or "")
+        for step in range(15):
+            if wlan.isconnected():
+                break
+            progress(step)
+            time.sleep(1)
+        if not wlan.isconnected():
+            return "Connection failed (timed out)."
+    except (OSError, ValueError):
+        return "Connection failed. Check the network and password."
+    finally:
+        if not wlan.isconnected():
+            try:
+                wlan.disconnect()
+            except OSError:
+                pass
+    try:
+        modwifi.save_station()
+    except OSError:
+        return "Connected, but Wi-Fi settings could not be saved."
 
 def scan_for_networks():
     """Initializes the Wi-Fi interface and gathers clean metadata targets."""
@@ -19,13 +49,13 @@ def scan_for_networks():
 
     menu_data = []
     for ap in sorted_scan:
-        ssid = ap[0].decode('utf-8', 'ignore').strip()
+        ssid = ap[0]
         rssi = ap[3]
         authmode = ap[4]
 
         if ssid:
             lock = "[P] " if authmode > 0 else "    "
-            display_str = f"{lock}{ssid} ({rssi}dBm)"
+            display_str = f"{lock}{ssid.decode('utf-8', 'ignore')} ({rssi}dBm)"
             menu_data.append((display_str, ssid, authmode))
 
     return menu_data
@@ -36,37 +66,33 @@ def main(env, args):
     ssid = args[1] if len(args) > 1 else None
     pwd = args[2] if len(args) > 2 else None
 
-    if args and (action != "connect" or len(args) < 2):
-        print("Usage: nm connect <ssid> [password]")
-        return
-
-    if args and action == "connect":
+    if args:
+        if not ((action == "connect" and 2 <= len(args) <= 3) or
+                (action in ("reconnect", "forget") and len(args) == 1)):
+            print("Usage: nm [connect <ssid> [password] | reconnect | forget]")
+            return
         wlan = network.WLAN(network.STA_IF)
-        wlan.active(True)
-
-        if wlan.isconnected():
-            wlan.disconnect()
-            time.sleep(0.5)
-
-        if pwd:
-            wlan.connect(ssid, pwd)
-        else:
-            wlan.connect(ssid)
-
-        timeout = 0
-        print("Connecting to WiFi", end="")
-        while not wlan.isconnected():
-            sys.stdout.write(".")
-            time.sleep(1)
-            timeout += 1
-            if timeout >= 15:
-                break
-
-        if wlan.isconnected():
-            print(f"\nConnected! IP: {wlan.ifconfig()[0]}")
-        else:
-            print("\nConnection failed (timed out).")
-
+        try:
+            if action == "reconnect":
+                if wificonfig.start_saved(wlan):
+                    print("Wi-Fi is connected." if wlan.isconnected() else "Connecting to saved Wi-Fi...")
+                else:
+                    print("No saved Wi-Fi. Connect once with nm.")
+            elif action == "forget":
+                modwifi.forget_station()
+                if wlan.active():
+                    wlan.disconnect()
+                print("Saved Wi-Fi removed.")
+            else:
+                print("Connecting to Wi-Fi", end="")
+                message = connect(wlan, ssid, pwd, lambda _: sys.stdout.write("."))
+                print()
+                if wlan.isconnected():
+                    print(f"Connected! IP: {wlan.ifconfig()[0]}")
+                if message:
+                    print(message)
+        except (OSError, ValueError):
+            print("\nnm: Wi-Fi operation failed. Open nm to select a network.")
         return
 
 
@@ -230,7 +256,7 @@ def main(env, args):
                     align="center")
 
             pwd_label2 = win.make_label(
-                    networks[lst.selected][1],
+                    networks[lst.selected][1].decode('utf-8', 'ignore'),
                     0, 2,
                     fg=252, bg=18,
                     bold=True,
@@ -271,38 +297,27 @@ def main(env, args):
 
         elif ui_state == "CONNECT_WIFI" and lst is not None:
             wlan = network.WLAN(network.STA_IF)
-            wlan.active(True)
-
-            if wlan.isconnected():
-                wlan.disconnect()
-                time.sleep(0.5)
-
-            if password:
-                wlan.connect(networks[lst.selected][1], password)
-            else:
-                wlan.connect(networks[lst.selected][1])
 
             win.invalidate()
             win.draw()
             tui.draw()
 
-            timeout = 0
             dots = ["   ", ".  ", ".. ", "..."]
-            while not wlan.isconnected():
-                win.draw_label(f"Connecting{dots[timeout % 4]}",
+
+            def progress(step):
+                win.draw_label(f"Connecting{dots[step % 4]}",
                                0, win.inner_h // 2,
                                fg=252, bg=18,
                                align="center")
                 tui.draw()
-                time.sleep(1)
-                timeout += 1
-                if timeout >= 15:
-                    break
 
-            if not wlan.isconnected():
+            message = connect(wlan, networks[lst.selected][1], password, progress)
+            password = ""
+            if message:
                 win.invalidate()
                 win.draw()
-                win.draw_label("Connection failed. Press any key.",
+                win.draw_label("Wi-Fi settings could not be saved." if wlan.isconnected()
+                               else "Connection failed. Press any key.",
                                0, win.inner_h // 2,
                                fg=210, bg=18,
                                align="center")

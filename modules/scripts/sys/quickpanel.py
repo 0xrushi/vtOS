@@ -161,11 +161,14 @@ class QuickPanel:
                         self.wlan.active(False)
                         self.confirm_wifi = None
                 else:
-                    self.wlan.active(True)
+                    import wificonfig
                     try:
-                        self.wlan.connect()  # use credentials in RAM/NVS, no blocking wait
-                        self.message = "Wi-Fi connecting..."
-                    except OSError:
+                        if wificonfig.start_saved(self.wlan):
+                            self.message = "Wi-Fi connecting..."
+                        else:
+                            self.wlan.active(True)
+                            self.message = "Use nm to select a Wi-Fi network"
+                    except (OSError, ValueError):
                         self.message = "Use nm to select a Wi-Fi network"
             elif index == 1:
                 if self.env.ble is not None:

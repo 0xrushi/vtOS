@@ -28,6 +28,7 @@
 #include "esp_wifi.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
+#include "nvs.h"
 
 #include <string.h>
 #include <stdint.h>
@@ -397,12 +398,95 @@ static mp_obj_t sniff_channel(size_t n_args, const mp_obj_t *args)
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(sniff_channel_obj, 0, 1, sniff_channel);
 
+// Keep one confirmed station profile independently of the SDK's RAM config.
+// Store only the fields needed to reconnect, with a layout stable across SDKs.
+typedef struct {
+    uint8_t ssid[32];
+    uint8_t password[64];
+} station_profile_t;
+
+static mp_obj_t save_station(void) {
+    wifi_ap_record_t ap;
+    esp_err_t err = esp_wifi_sta_get_ap_info(&ap);
+    if (err != ESP_OK) {
+        mp_raise_OSError(err);
+    }
+    wifi_config_t config;
+    err = esp_wifi_get_config(WIFI_IF_STA, &config);
+    if (err != ESP_OK) {
+        mp_raise_OSError(err);
+    }
+    station_profile_t profile;
+    memcpy(profile.ssid, config.sta.ssid, sizeof(profile.ssid));
+    memcpy(profile.password, config.sta.password, sizeof(profile.password));
+    nvs_handle_t handle;
+    err = nvs_open("vtos_wifi", NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = nvs_set_blob(handle, "station", &profile, sizeof(profile));
+        if (err == ESP_OK) {
+            err = nvs_commit(handle);
+        }
+        nvs_close(handle);
+    }
+    if (err != ESP_OK) {
+        mp_raise_OSError(err);
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(save_station_obj, save_station);
+
+static mp_obj_t load_station(void) {
+    station_profile_t profile;
+    size_t size = sizeof(profile);
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("vtos_wifi", NVS_READONLY, &handle);
+    if (err == ESP_OK) {
+        err = nvs_get_blob(handle, "station", &profile, &size);
+        nvs_close(handle);
+    }
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return mp_const_none;
+    }
+    if (err != ESP_OK) {
+        mp_raise_OSError(err);
+    }
+    if (size != sizeof(profile) || !profile.ssid[0]) {
+        mp_raise_ValueError(MP_ERROR_TEXT("invalid saved Wi-Fi profile"));
+    }
+    mp_obj_t pair[] = {
+        mp_obj_new_bytes(profile.ssid, strnlen((const char *)profile.ssid, sizeof(profile.ssid))),
+        mp_obj_new_bytes(profile.password, strnlen((const char *)profile.password, sizeof(profile.password))),
+    };
+    return mp_obj_new_tuple(2, pair);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(load_station_obj, load_station);
+
+static mp_obj_t forget_station(void) {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("vtos_wifi", NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = nvs_erase_key(handle, "station");
+        if (err == ESP_OK) {
+            err = nvs_commit(handle);
+        }
+        nvs_close(handle);
+    }
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        mp_raise_OSError(err);
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(forget_station_obj, forget_station);
+
 // ------------------------------------------------------------------
 // module registration (modc2/lora style)
 // ------------------------------------------------------------------
 
 static const mp_rom_map_elem_t modwifi_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__),      MP_ROM_QSTR(MP_QSTR_modwifi) },
+    { MP_ROM_QSTR(MP_QSTR_save_station),  MP_ROM_PTR(&save_station_obj) },
+    { MP_ROM_QSTR(MP_QSTR_load_station),  MP_ROM_PTR(&load_station_obj) },
+    { MP_ROM_QSTR(MP_QSTR_forget_station), MP_ROM_PTR(&forget_station_obj) },
     { MP_ROM_QSTR(MP_QSTR_sniff_start),   MP_ROM_PTR(&sniff_start_obj) },
     { MP_ROM_QSTR(MP_QSTR_sniff_stop),    MP_ROM_PTR(&sniff_stop_obj) },
     { MP_ROM_QSTR(MP_QSTR_sniff_stats),   MP_ROM_PTR(&sniff_stats_obj) },

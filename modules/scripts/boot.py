@@ -115,6 +115,9 @@ class Cmd:
 
 env.shell = shell.Shell(env)
 
+import wificonfig
+wificonfig.start_at_boot()
+
 # quick way to return to the shell from MicroPython
 # just type `sh` into MicroPython to return to our shell
 sh = Cmd(env.shell.run)
