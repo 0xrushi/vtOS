@@ -187,7 +187,7 @@ You can execute the following commands from the built-in shell:
 | `blescan` | Passive BLE scan; lists nearby devices with address, RSSI, company ID and name |
 | `chess` | Basic chess game using unicode characters |
 | `clear` | Clears the screen |
-| `clip` | Phone-to-device clipboard: receives text shared from the Android companion app (`tools/clipshare-android`); `clip paste` or Alt+V types it. See [docs/CLIPBOARD.md](docs/CLIPBOARD.md) |
+| `clip` | Phone-to-device clipboard: `clip pair` shows a 6-digit code to pair the Android companion app (`tools/clipshare-android`), then text shared from the phone lands in the clipboard; `clip paste` or Alt+V types it. A clipboard icon in the status bar shows the service state. See [docs/CLIPBOARD.md](docs/CLIPBOARD.md) |
 | `c2` | Codec 2 audio/voice codec encode/decode utility |
 | `dict` | DICT protocol dictionary lookup client |
 | `echo` | Prints its arguments back out |
