@@ -5,7 +5,8 @@ FontAwesome and other icon packs.
 Licensed under the GNU General Public License v2.0.
 """
 
-WIDE_CHARS = (0xe015, 0xe152, 0xe048, 0xe033, 0xe00b, 0xe020,)
+# 0xe0c1 is a hand-drawn clipboard glyph (not from Siji) for the clipd indicator.
+WIDE_CHARS = (0xe015, 0xe152, 0xe048, 0xe033, 0xe00b, 0xe020, 0xe0c1,)
 WIDE_WIDTH = 12
 WIDE_HEIGHT = 12
 
@@ -19,6 +20,8 @@ _WIDE_FONT =\
     b'\xff\xf0\xff\xf0\xf9\xf0\xfa\xf0\xdb\x70\xea\xf0\xf1\xf0\xea\xf0'\
     b'\xdb\x70\xfa\xf0\xf9\xf0\xff\xf0\xff\xf0\xff\xf0\xea\xb0\xff\xf0'\
     b'\xe0\x30\xe0\x30\xe0\x30\xe0\x30\xff\xf0\xea\xb0\xff\xf0\xff\xf0'\
+    b'\xff\xf0\xf0\xf0\xc0\x30\xdf\xb0\xd0\xb0\xdf\xb0\xd0\xb0\xdf\xb0'\
+    b'\xd0\xb0\xdf\xb0\xc0\x30\xff\xf0'\
     b''
 
 WIDE_FONT = memoryview(_WIDE_FONT)

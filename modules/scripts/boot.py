@@ -47,9 +47,12 @@ env.sts.refresh()
 import quickpanel
 quickpanel.install(env, tft)
 
+import clipd
+
 # The FAST loop (30ms)
 def scheduled_fast(_):
     trackball.poll(env)
+    clipd.tick(env)
     if env.quickpanel is not None:
         env.quickpanel.poll()
 
@@ -117,6 +120,13 @@ env.shell = shell.Shell(env)
 
 import wificonfig
 wificonfig.start_at_boot()
+
+# Phone clipboard share: binds lazily once Wi-Fi is up (see clipd.poll()).
+try:
+    if clipd.load_config()["autostart"]:
+        clipd.start(env)
+except Exception:
+    pass
 
 # quick way to return to the shell from MicroPython
 # just type `sh` into MicroPython to return to our shell

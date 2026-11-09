@@ -27,6 +27,11 @@ class Environment:
         self.app_uses_radio = False
         self.volume = 70
         self.sd_busy = False
+        # Phone-to-device clipboard (see clipd.py)
+        self.clipboard = ""
+        self.clipd = None
+        self.clip_flash_until = None
+        self.paste_buf = ""
         self.update_font(font)
         self.update_icon_font(icon_font)
 

@@ -8,6 +8,7 @@ _RAW_MODE = b"\x03"
 _KEY_MODE = b"\x04"
 _BACKSPACE = 8
 _D_KEYS = (ord("d"), ord("D"))
+_V_KEYS = (ord("v"), ord("V"))
 # Private byte the shell treats as "open the launcher" (Alt+D).
 LAUNCHER_KEY = 0x1D
 MICROPHONE_KEY = 0x1C
@@ -52,6 +53,9 @@ class KeyboardRepeatTerminal(io.IOBase):
         self._mic_down = False
         self._mic_known = False
         self._mic_pressed = False
+        # Alt+V calls this (set by install()); no-op until then.
+        self.on_paste = None
+        self._paste_latched = False
         self._held = self._read_held()
         self._last_state = time.ticks_ms()
 
@@ -94,7 +98,7 @@ class KeyboardRepeatTerminal(io.IOBase):
                 key = self._one[0]
 
         now = time.ticks_ms()
-        if key in _D_KEYS or key == _BACKSPACE or self.repeat.due(now) or time.ticks_diff(now, self._last_state) >= 20:
+        if key in _D_KEYS or key in _V_KEYS or key == _BACKSPACE or self.repeat.due(now) or time.ticks_diff(now, self._last_state) >= 20:
             try:
                 self._held = self._read_held()
             except (OSError, ValueError):
@@ -108,6 +112,16 @@ class KeyboardRepeatTerminal(io.IOBase):
             # The keyboard reports ALT only in its key matrix, not in the
             # character stream, so Alt+D arrives as a plain "d".
             self._pending = LAUNCHER_KEY
+            return
+        if not self._alt:
+            self._paste_latched = False
+        if key in _V_KEYS and self._alt and self.on_paste is not None and not self._paste_latched:
+            # Same Alt+letter trick: paste the phone clipboard, swallow the "v".
+            # Latched until Alt is released: the pasted text comes back through
+            # this same path, and a "v" in it (while Alt is still down) must
+            # type as a letter, not start the paste over.
+            self._paste_latched = True
+            self.on_paste()
             return
         if key is None and self._mic_pressed:
             self._mic_pressed = False
@@ -159,6 +173,7 @@ def install(env):
             bus = machine.I2C(0, sda=machine.Pin(18), scl=machine.Pin(8),
                               freq=400000, timeout=50000)
             terminal = KeyboardRepeatTerminal(stream, bus)
+            terminal.on_paste = lambda: __import__("clipd").paste(env)
     except (OSError, ValueError):
         # Keep normal typing on keyboards whose firmware predates raw mode.
         pass

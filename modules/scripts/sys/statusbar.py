@@ -16,6 +16,7 @@ WIFI   = chr(0xE048).encode()
 BT     = chr(0xE00B).encode()
 SPKR   = chr(0xE152).encode()
 BAT    = chr(0xE033).encode()
+CLIP   = chr(0xE0C1).encode()  # hand-drawn clipboard, see fonts/siji_mpy_statusbar_12.py
 
 # Palette (xterm-256), shared with the launcher: a quiet dark bar, soft
 # per-item accent colours, and traffic-light state colours. The dynamic
@@ -124,24 +125,33 @@ class StatusBar:
         left = b''.join(segments)
         left_cols = cols
 
-        # Right: bluetooth (ON when the BLE mesh transport is active --
-        # see env.ble / hardware.init_ble), speaker volume, battery
-        segments = []
-        cols = 0
-        cfield('ble_c', GREY)
-        icon(BT)
-        field('ble', b'OFF')
-        text(b' ')
-        cfield('vol_c', GREY)
-        icon(SPKR)
-        field('vol', b'  0')
-        color(DIM)
-        text(b'% ')
-        cfield('bat_c', GREEN)
-        icon(BAT)
-        field('bat', b'  0')
-        color(DIM)
-        text(b'%')
+        # Right: clipboard service (only when there is room), bluetooth
+        # (ON when the BLE mesh transport is active -- see env.ble /
+        # hardware.init_ble), speaker volume, battery
+        for with_clip in (True, False):
+            segments = []
+            cols = 0
+            if with_clip:
+                cfield('clip_c', GREY)
+                icon(CLIP)
+                text(b' ')
+            cfield('ble_c', GREY)
+            icon(BT)
+            field('ble', b'OFF')
+            text(b' ')
+            cfield('vol_c', GREY)
+            icon(SPKR)
+            field('vol', b'  0')
+            color(DIM)
+            text(b'% ')
+            cfield('bat_c', GREEN)
+            icon(BAT)
+            field('bat', b'  0')
+            color(DIM)
+            text(b'%')
+            if left_cols + cols <= width:
+                break
+            offsets.pop('clip_c', None)
 
         right = b''.join(segments)
         right_cols = cols
@@ -167,6 +177,7 @@ class StatusBar:
         self.off_bat    = right_base + offsets['bat']
         self.off_wifi_c = s_len + offsets['wifi_c']
         self.off_ble_c  = right_base + offsets['ble_c']
+        self.off_clip_c = right_base + offsets['clip_c'] if 'clip_c' in offsets else None
         self.off_vol_c  = right_base + offsets['vol_c']
         self.off_bat_c  = right_base + offsets['bat_c']
 
@@ -326,6 +337,18 @@ class StatusBar:
         else:
             self._write_at(self.off_ble_c, GREY)
             self.buffer[self.off_ble : self.off_ble + 3] = b"OFF"
+
+        # Clipboard service (clipd): grey = off, green = listening,
+        # yellow for a few seconds after a clip arrives.
+        if self.off_clip_c is not None:
+            clipd = getattr(self.env, 'clipd', None)
+            flash = getattr(self.env, 'clip_flash_until', None)
+            if clipd is None or not clipd.listening:
+                self._write_at(self.off_clip_c, GREY)
+            elif flash is not None and time.ticks_diff(flash, time.ticks_ms()) > 0:
+                self._write_at(self.off_clip_c, YELLOW)
+            else:
+                self._write_at(self.off_clip_c, GREEN)
 
         # Push to Terminal
         self.env.term.top_bar(self.buffer)

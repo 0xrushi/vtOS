@@ -29,6 +29,7 @@ DESCRIPTIONS = {
     "blescan": "ble device scan",
     "c2": "command & control",
     "chess": "play chess",
+    "clip": "phone clipboard share",
     "dict": "dictionary",
     "epub": "e-book reader",
     "fc": "font chooser",

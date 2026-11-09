@@ -246,3 +246,47 @@ def test_microphone_event_does_not_replace_a_character(keyboard):
     clock.now = 20
     assert read_key(terminal) == ord("a")
     assert read_key(terminal) == 0x1C
+
+
+def test_alt_v_calls_paste_hook_and_swallows_the_key(keyboard):
+    terminal, native, bus, clock = make_terminal(keyboard)
+    calls = []
+    terminal.on_paste = lambda: calls.append(1)
+    bus.alt = True
+    native.keys = [ord("v")]
+    assert read_key(terminal) is None
+    assert calls == [1]
+
+
+def test_plain_v_and_alt_v_without_hook_pass_through(keyboard):
+    terminal, native, bus, clock = make_terminal(keyboard)
+    terminal.on_paste = lambda: pytest.fail("must not paste")
+    native.keys = [ord("v")]
+    assert read_key(terminal) == ord("v")
+    terminal.on_paste = None
+    bus.alt = True
+    native.keys = [ord("v")]
+    assert read_key(terminal) == ord("v")
+
+
+def test_alt_v_pastes_once_per_alt_press(keyboard):
+    terminal, native, bus, clock = make_terminal(keyboard)
+    calls = []
+    terminal.on_paste = lambda: calls.append(1)
+    bus.alt = True
+    native.keys = [ord("v")]
+    assert read_key(terminal) is None
+    # a "v" inside the pasted text arrives while Alt is still held: it types
+    native.keys = [ord("v")]
+    assert read_key(terminal) == ord("v")
+    assert calls == [1]
+    # releasing and pressing Alt again re-arms it
+    bus.alt = False
+    native.keys = [ord("x")]
+    clock.now = 100
+    assert read_key(terminal) == ord("x")
+    bus.alt = True
+    clock.now = 200
+    native.keys = [ord("v")]
+    assert read_key(terminal) is None
+    assert calls == [1, 1]

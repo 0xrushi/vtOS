@@ -13,6 +13,7 @@ run. Nothing here claims more than that.
 | Sub-GHz (LoRa chip, SX1262) | `loramon` (rx/tx monitor), `lorachat`, `loracfg` | implemented; loramon not re-verified this session |
 | RF lab | iqlab: `tone <40\|80> [offset_MHz]`, keyboard input ([explained here](docs/IQTONE.md)) | verified on a HackRF (tones at set offsets); the vtOS `iqtx` app is gated off (RAM bank) |
 | Terminal | vtOS shell, SSH client with profiles, SFTP/FTP, telnet, IRC, file manager, Alt+D launcher, `neofetch` | existing apps; launcher/SSH profiles verified earlier |
+| Phone clipboard share | `clip` + `tools/clipshare-android` | host-tested and curl-tested against the protocol; not yet run on hardware or a phone |
 | Remote access | `sshd`, `telnetd`, `ftpd`, `sftpd`, `vncd`, `webvncd` | existing, not re-tested |
 | Tailscale | `tailscale`: manual MicroLink VPN; SSH/`yt` to numeric tailnet IPv4 | device registered and exchanged SSH data over a direct tunnel; synthetic playback measured 7.3 fps; real-video stability, relay playback and long-run measurements still need device checks; [setup](docs/TAILSCALE.md) |
 | USB | `usbmsc` (SD card as a USB drive) | existing |

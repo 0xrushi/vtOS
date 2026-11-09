@@ -79,6 +79,7 @@ class Shell:
         self._load_aliases()
 
         self.register("ping",        _app("bin.ping"))
+        self.register("clip",        _app("bin.clip"))
         self.register("sshd",        _app("bin.sshd"))
         self.register("ssh",         _app("bin.ssh"))
         self.register("tailscale",   _app("bin.tailscale"))

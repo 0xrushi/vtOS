@@ -92,3 +92,31 @@ def test_notification_replaces_bar_then_reverts():
     clock.now = 6000
     bar.refresh()
     assert "sshd" not in visible(env.term.bar)[0]
+
+
+def test_clipboard_icon_colors_follow_service_state():
+    mod, bar, env, clock = load(cols=64)
+    assert bar.off_clip_c is not None
+    env.clipd, env.clip_flash_until = None, None
+    bar.refresh()
+    assert env.term.bar[bar.off_clip_c:bar.off_clip_c + 3] == b"244"
+    env.clipd = SimpleNamespace(listening=True)
+    bar.refresh()
+    assert env.term.bar[bar.off_clip_c:bar.off_clip_c + 3] == b"114"
+    clock.now = 1000
+    env.clip_flash_until = 3000
+    bar.refresh()
+    assert env.term.bar[bar.off_clip_c:bar.off_clip_c + 3] == b"221"
+    clock.now = 3000
+    bar.refresh()
+    assert env.term.bar[bar.off_clip_c:bar.off_clip_c + 3] == b"114"
+    env.clipd = SimpleNamespace(listening=False)
+    bar.refresh()
+    assert env.term.bar[bar.off_clip_c:bar.off_clip_c + 3] == b"244"
+
+
+def test_clipboard_icon_dropped_when_the_bar_is_too_narrow():
+    mod, bar, env, clock = load(cols=40)
+    assert bar.off_clip_c is None
+    bar.refresh()
+    assert visible(env.term.bar)[1] == 40
