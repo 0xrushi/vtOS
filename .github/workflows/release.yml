@@ -1,9 +1,9 @@
 name: Build and Release Firmware
 
+# Releases are normally made locally with tools/release.sh. This workflow is
+# kept as a manual fallback (Actions > Run workflow); it no longer runs on tag
+# pushes, which would overwrite the locally built assets.
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version_tag:

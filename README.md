@@ -204,6 +204,7 @@ You can execute the following commands from the built-in shell:
 | `loracfg` | Utility to configure LoRa frequency and power. Try `menu loracfg` |
 | `lorachat` | A basic chatroom based on the LoRa radio |
 | `loramon` | TUI LoRa monitor; lists received packets with timestamp, length and RSSI; `/tx` transmits plain text on the configured frequency, `/freq` retunes at runtime |
+| `meshchat [name] [--demo] [--raw]` | Meshtastic node and chat UI over the LoRa radio: encrypted channels, direct messages with acks, relaying, node list with signal/battery/position, telemetry, and a settings TUI (region, preset, channels and keys, device name, position). Channel links import/export. `--raw` speaks `lorachat`'s plain format, `--demo` runs a fake mesh. Default region US; change it in Settings |
 | `md` | Markdown/plain text file viewer; open a `.md`, `.markdown` or `.txt` file |
 | `menu` | An interactive shortcut menu for commands. |
 | `mines` | Opens the minesweeper clone |
@@ -234,6 +235,42 @@ You can execute the following commands from the built-in shell:
 | `zm` | Launches `dfrotz`, the ZMachine interpreter |
 
 To get out of the shell, type `exit`. This will bring you to the MicroPython shell, where you can type in python expressions. To get back to the built-in shell, type `sh` in the MicroPython shell.
+
+### Meshtastic chat (`meshchat`)
+
+`meshchat` makes the T-Deck a Meshtastic node and client in one: encrypted channels, direct messages with delivery marks, relaying for the mesh, a node list, and a settings screen. Details, limits and the bring-up checklist are in [docs/MESHTASTIC.md](docs/MESHTASTIC.md). It is tested on the device (radio, transmit, retuning) but has not yet been confirmed receiving a real Meshtastic packet.
+
+```
+meshchat              # start the node (first run: region US, LongFast, default channel)
+meshchat Rush         # same, and sets your long name on first use
+meshchat --demo       # a scripted fake mesh, no radio
+meshchat --raw        # plain "nick: text" LoRa, like lorachat (not Meshtastic)
+```
+
+**Controls**
+
+| Input | Does |
+|---|---|
+| Trackball left / right | switch chats (the tabs along the top) |
+| Trackball up / down | scroll messages, or move in lists and menus |
+| Trackball click | open the menu, or go back one screen |
+| Hold the click | quit (`/quit` also works) |
+| Keyboard | always types into the bottom line; Enter sends; Alt+V pastes |
+
+Delivery marks after your messages: `...` queued, `sent` on air, `ok` acknowledged, `!` failed. Slash commands: `/nodes`, `/dm name`, `/node name`, `/trace name`, `/pos`, `/announce`, `/fav name`, `/settings`, `/channels`, `/stats`, `/info`, `/clear`, `/help`, `/quit`.
+
+**Settings:** click, choose **Settings**, press Enter (or type `/settings`).
+
+1. Pick a section with up/down and press Enter: Radio, Channels, Device, Position, Telemetry, Advanced.
+2. Up/down chooses a setting. Left/right changes it (switches, choices, numbers). Enter on a text or number setting opens a prompt: type the value and press Enter (for numbers the first key you type replaces the old value).
+3. A line under the title shows the resulting slot, frequency, modem and power as you change things. A `*` marks anything you changed.
+4. Click to go back. **Nothing reaches the radio until you choose "Apply changes"** at the bottom of the Settings list. Leaving with unapplied edits asks Apply / Discard / Keep editing.
+
+Good first settings: Device → long and short name; Radio → region (default **US**, preset LongFast) and TX power (default 17 dBm, capped by region and hardware); Position → fixed latitude/longitude, or GPS on a T-Deck Plus, with precision bits below 32 to blur your location.
+
+**Channels** (Settings → Channels, or `/channels`): Enter edits a channel (name, key, position precision), `a` adds one with a new random key, `d` deletes, `s` shows its `meshtastic.org/e/#...` link (also saved to `/flash/mesh-channels.txt`), `i` imports a link you paste with Alt+V. Everyone on a channel needs the same key, and a link contains the key, so keep it private. Importing replaces your channels and radio preset and asks first.
+
+**Not implemented:** reading per-node (public-key) encrypted direct messages from current Meshtastic apps, remote administration, MQTT and store-and-forward. See [docs/MESHTASTIC.md](docs/MESHTASTIC.md).
 
 ### Startup script (`.shellrc`)
 
@@ -345,6 +382,19 @@ make flash PORT=/dev/ttyUSB0
 make repl PORT=/dev/ttyUSB0
 ```
 
+
+#### Publishing a release
+
+`tools/release.sh <tag>` builds the firmware with Docker and publishes it to GitHub Releases in one run: it stamps the version into the shell banner, runs `make build`, builds the dual-boot image, then uploads the images, a zip and `SHA256SUMS.txt` with generated notes. Commit and push first (the release is made from your current commit), and run `make init` once if you have not built before.
+
+```
+tools/release.sh v0.1.15 --dry-run   # build and package only; prints the gh command, publishes nothing
+tools/release.sh v0.1.15             # asks for confirmation, then creates the tag and release
+```
+
+Files produced (also kept in `release/<tag>/`): `vtOS-<tag>.bin` (single image, flash at `0x0`), `vtOS-<tag>-dualboot.bin` (loader menu + vtOS, flash at `0x0`), `vtOS-<tag>-slot.bin` (vtOS only, flash at `0x110000` on an already dual-boot device). Useful options: `--from DIR` (reuse a finished build), `--no-dualboot`, `--draft`, `--prerelease`, `--notes-file FILE`; see `--help`.
+
+`.github/workflows/release.yml` no longer runs on tag pushes (it would overwrite the locally built assets); it remains as a manual fallback under Actions > Run workflow.
 
 ## ⚖️ License & Attribution
 

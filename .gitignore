@@ -11,3 +11,6 @@ flash-backup/
 # local working notes, not pushed
 TODO.md
 summary.md
+
+# local release staging (tools/release.sh)
+/release/

@@ -45,6 +45,7 @@ DESCRIPTIONS = {
     "loramon": "lora monitor",
     "md": "markdown viewer",
     "menu": "shortcut menu",
+    "meshchat": "meshtastic chat",
     "mines": "minesweeper",
     "neofetch": "system info",
     "nm": "network manager",

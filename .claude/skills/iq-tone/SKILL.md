@@ -1,6 +1,6 @@
 ---
 name: iq-tone
-description: Explains the T-Deck IQ tone transmitter (iqtx / iqlab) - terms (Msps, DAC, IQ, NCO, channel, backoff), how tone frequency is derived from sample rate, loop length N and cycles m, the supported frequency range, and known limits. Use when working on modules/mod_iqtx, bin/iqtx.py, the iqlab dual-boot payload, or when asked why only "tone 40/80" exist or how to emit a given frequency.
+description: Explains the T-Deck IQ tone transmitter (iqtx / iqlab) - terms (Msps, DAC, IQ, NCO, channel, backoff), how tone frequency is derived from sample rate, loop length N and cycles m, the supported frequency range, and known limits. Also covers installing, restoring and recovering the dual-boot loader (loader/vtOS/iqlab/pocket partitions, esptool commands, download mode). Use when working on modules/mod_iqtx, bin/iqtx.py, the iqlab dual-boot payload, when setting up or repairing dual boot (missing boot menu, make flash wiped the loader), or when asked why only "tone 40/80" exist or how to emit a given frequency.
 ---
 
 # IQ tone transmitter (iqtx / iqlab)
@@ -94,6 +94,64 @@ Use **`iqtx`** only once the linker-fragment fix lands and `BANK_PROTECTED` is 1
 - Unverified: negative offsets (reverse circle), whether hardware requires N to be a multiple of 256, and why NCO must be off.
 - While running, the app owns the RF: WiFi and BLE are taken down (`iqtx` restores WiFi on quit).
 
-## Flashing / dual-boot notes
+## Dual-boot setup, restore and recovery
 
-Loader at 0x10000, vtOS at 0x110000, iqlab at 0x510000. See `utils/dualboot/README.md` for the flash procedure and how to enter download mode. The display bring-up fixes (GPIO10 power, RAMWR command, byte order) are in `display_min.c` of the loader and iqlab.
+Full reference: `utils/dualboot/README.md`. The display bring-up fixes (GPIO10 power, RAMWR command, byte order) are in `display_min.c` of the loader and iqlab.
+
+Layout (`utils/dualboot/partitions-dual.csv`): loader (factory) 0x10000, vtOS (ota_0) 0x110000, iqlab (ota_1) 0x510000, pocket (ota_2) 0x610000, agentfs 0x790000, coredump 0x910000, vfs (`/flash`) 0x920000. The build-time table (`boards/LILYGO_T_DECK/partitions.csv`) only changes how vtOS is linked; the table written at 0x8000 must be the dual one.
+
+**Never run `make flash` once dual boot is installed.** It does `erase_flash` and writes the single-image `firmware.bin`, which removes the loader and the dual table. The payload to flash is `build_output/micropython.bin` at 0x110000, not `firmware.bin`.
+
+### Is dual boot installed?
+
+- On the device (shell stopped, MicroPython prompt): `import esp32; [p.info() for p in esp32.Partition.find(esp32.Partition.TYPE_APP)]`. Dual boot lists `loader`, `vtos` (subtype 16), `iqlab`, `pocket`. Only one `vtos` entry with subtype 0 means the single-image layout.
+- From a flash dump: the table at 0x8000 and bytes at 0x10000 (`0xFF...` = no loader, `0xE9` = an app image).
+- Visible symptom: no 3-second menu after RST.
+
+### Step 0: back up first (always)
+
+Device in download mode (see below), then:
+
+```bash
+esptool --chip esp32s3 -p PORT -b 921600 --before no_reset --after no_reset \
+  read-flash 0x0 0x1000000 flash-backup/fulldump-DATE/tdeck-16MB.bin     # about 70 s
+```
+
+`flash-backup/` is git-ignored. If vtOS is running you can also copy the files: `mpremote connect PORT cp -r :/flash/. flash-backup/flash-DATE/`. A full dump makes every later step reversible.
+
+### Case A: fresh install, or moving from the single-image layout
+
+Follow "First-time setup" in `utils/dualboot/README.md`: build the loader (`idf.py build` in `utils/dualboot/loader`), build vtOS (`make build`), optionally build iqlab, then one `esptool write-flash` of bootloader@0x0, partition-table@0x8000, ota_data_initial@0xd000, dualboot_loader@0x10000, micropython.bin@0x110000, ofdm_tx.bin@0x510000. The README warns this reformats `/flash` when coming from the old layout, so rely on the backup.
+
+### Case B: payloads and `/flash` still intact, loader/table lost (restored 2026-11-08)
+
+Check the dump: the vtOS slot equals `build_output/micropython.bin`, and `0x510000` / `0x610000` still start with `0xE9`. Then write only the four loader-side pieces. vfs keeps the same offset and size, so `/flash` is not touched and vtOS/iqlab/pocket are not rewritten:
+
+```bash
+L=utils/dualboot/loader/build
+esptool --chip esp32s3 -p PORT -b 460800 --before no_reset --after hard_reset write-flash \
+  --flash-mode dio --flash-size 16MB --flash-freq 80m \
+  0x0 $L/bootloader/bootloader.bin 0x8000 $L/partition_table/partition-table.bin \
+  0xd000 $L/ota_data_initial.bin 0x10000 $L/dualboot_loader.bin
+```
+
+Each write is hash-verified by esptool. If the loader build is missing, rebuild it first (command in the README). An empty payload slot is dimmed in the menu and skipped, so a missing iqlab build is fine.
+
+### Verify
+
+Press RST: a 3-second menu appears. Tap BOOT to move the highlight, hold BOOT for 1 s to boot at once, or let the timer boot the last used slot. Over USB serial (115200) the keys `1` (vtOS) and `2` (iqlab) also choose. Every reset returns to the menu, by design, so wait about 10 s after a reset before `mpremote` can reach vtOS.
+
+### Entering download mode
+
+- From vtOS: leave the shell with `exit`, then `import machine; machine.bootloader()`.
+- Hardware: unplug USB, hold BOOT, plug in, keep holding about 3 s, then use `--before no_reset`. The port name can change after replugging (`/dev/cu.usbmodem...`).
+- Do not toggle DTR/RTS with pyserial to "reset" the board. On this native-USB chip it lands in ROM download mode (`rst:0x15 ... boot:0x0 DOWNLOAD`) and `mpremote` then fails with "could not enter raw repl". Use the RST button or `mpremote reset`. A download-mode port reads nothing until it is flashed or reset with the RST button.
+
+### Gotchas
+
+- Flashing a slot from vtOS, what worked (2026-11-09): get to the `>>>` prompt (type `sh` returns to the shell, `exit` leaves it), type `import machine; machine.bootloader()` over the serial port, flash with `--before no_reset --after no_reset`, then reboot with `esptool ... --before no_reset --after watchdog_reset chip-id`. `--after hard_reset` (RTS) can leave the chip in download mode on this board. `mpremote` often fails with "could not enter raw repl" or `NameError: name 'h'`; typing to the port with pyserial is more reliable, and an `mpremote` run is fine once it answers.
+- A running `meshchat` or other full-screen app ignores `mpremote`; quit it first (`/quit`).
+- esptool 5.x uses hyphenated subcommands (`write-flash`, `read-flash`); older versions used underscores.
+- Install `mpremote` and `esptool` in a scratch venv; Docker cannot pass the USB serial device through on macOS, so the Makefile `sync_file` / `flash` targets (Linux-style `/dev/ttyACM0`) don't work there.
+- Files copied into `/flash` shadow the frozen modules because `sys.path` is `['', '.frozen', '/lib']` with the working directory `/flash`. A new command still has to be registered; copying files alone does not add it to the shell. Freezing it into the firmware and writing only the vtOS slot (`write-flash 0x110000 build_output/micropython.bin`) is the clean route and leaves `/flash` and the other slots alone.
+- Updating one slot later: `write-flash 0x110000 build_output/micropython.bin` for vtOS, `0x510000 .../ofdm_tx.bin` for iqlab, `0x10000 dualboot_loader.bin` for the loader.

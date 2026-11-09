@@ -119,6 +119,7 @@ class Shell:
         self.register("lorachat",    _app("bin.lorachat",   tui=True, radio=True))
         self.register("loramon",     _app("bin.loramon",    tui=True, radio=True))
         self.register("blechat",     _app("bin.blechat",    tui=True, ble=True))
+        self.register("meshchat",    _app("bin.meshchat",   tui=True))
         self.register("rec",         _app("bin.rec",        rec=True))
         self.register("vi",         _app("modvi"))
         self.register("zm",         _app("modzm"))
