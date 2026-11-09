@@ -54,8 +54,8 @@ def test_native_decoder_rejects_truncated_frame(decoder, tmp_path):
 def strip_decoder(tmp_path_factory):
     folder = tmp_path_factory.mktemp("jpeg-strip")
     driver = (ROOT / "modules/st7789/st7789.c").read_text()
-    start = driver.index("static int out_strip(")
-    end = driver.index("\n}\n", start) + 3
+    start = driver.index("static void copy_strip(")
+    end = driver.index("\n}\n", driver.index("static int out_fill(", start)) + 3
     # Compile the production callback against a framebuffer that emulates SPI.
     # Offset placement, clipping of the last MCU, and transaction count are real.
     source = r'''
@@ -66,7 +66,7 @@ def strip_decoder(tmp_path_factory):
 #include "tjpgd565.h"
 typedef struct {
     unsigned char *pixels;
-    unsigned int width, x0, y0, x1, y1, transfers;
+    unsigned int width, height, x0, y0, x1, y1, transfers;
     void *spi_obj;
 } st7789_ST7789_obj_t;
 typedef struct {
@@ -77,7 +77,10 @@ typedef struct {
 #define DC_HIGH() ((void)0)
 #define CS_LOW() ((void)0)
 #define CS_HIGH() ((void)0)
+#define JPG_FILL_ROWS 8
+#define MIN(a,b) ((a)<(b) ? (a) : (b))
 static void set_window(st7789_ST7789_obj_t *self, int x0, int y0, int x1, int y1) {
+    if (x0<0 || y0<0 || x1>=(int)self->width || y1>=(int)self->height) abort();
     self->x0=x0; self->y0=y0; self->x1=x1; self->y1=y1;
 }
 static void write_spi(void *obj, const uint8_t *data, int size) {
@@ -99,7 +102,8 @@ static unsigned int input(JDEC *jd, uint8_t *dst, unsigned int n) {
     return n;
 }
 int main(int argc, char **argv) {
-    if (argc != 2) return 2;
+    if (argc != 2 && argc != 4) return 2;
+    int fill=argc==4;
     FILE *fp=fopen(argv[1], "rb");
     if (!fp) return 2;
     IODEV dev={0};
@@ -108,14 +112,16 @@ int main(int argc, char **argv) {
     JDEC jd;
     if (jd_prepare(&jd, input, work, sizeof(work), &dev)) return 3;
     st7789_ST7789_obj_t display={0};
-    display.width=jd.width+6; display.spi_obj=&display;
-    size_t size=2*display.width*(jd.height+10);
+    display.width=fill ? atoi(argv[2]) : jd.width+6;
+    display.height=fill ? atoi(argv[3]) : jd.height+10;
+    display.spi_obj=&display;
+    size_t size=2*display.width*display.height;
     display.pixels=malloc(size); memset(display.pixels, 0xA5, size);
     dev.self=&display; dev.wfbuf=jd.width;
-    dev.fbuf=malloc(2*jd.width*jd.msy*8);
+    dev.fbuf=malloc(2*(jd.width*jd.msy*8+(fill ? JPG_FILL_ROWS*display.width : 0)));
     jd.x_offs=3; jd.y_offs=5;
-    if (jd_decomp(&jd, out_strip, 0)) return 4;
-    if (display.transfers != (jd.height+jd.msy*8-1)/(jd.msy*8)) return 5;
+    if (jd_decomp(&jd, fill ? out_fill : out_strip, 0)) return 4;
+    if (!fill && display.transfers != (jd.height+jd.msy*8-1)/(jd.msy*8)) return 5;
     fwrite(display.pixels, 1, size, stdout);
     free(dev.fbuf); free(display.pixels);
     return 0;
@@ -136,3 +142,16 @@ def test_strip_matches_full_frame_and_preserves_border(decoder, strip_decoder, s
         start = 2 * ((y + 5) * (width + 6) + 3)
         expected[start:start + 2 * width] = full[2 * y * width:2 * (y + 1) * width]
     assert strip == expected
+
+
+@pytest.mark.parametrize("sampling,width,height", [("420", 32, 32), ("422", 35, 19), ("444", 19, 17)])
+def test_fill_scales_every_display_pixel(decoder, strip_decoder, sampling, width, height):
+    path = FIXTURES / (sampling + ".jpg")
+    full = subprocess.check_output([str(decoder), str(path)])
+    scaled = subprocess.check_output([str(strip_decoder), str(path), "320", "240"])
+    expected = bytearray()
+    for y in range(240):
+        for x in range(320):
+            src = 2 * ((y * height // 240) * width + x * width // 320)
+            expected.extend(full[src:src + 2])
+    assert scaled == expected

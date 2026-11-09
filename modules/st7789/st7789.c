@@ -1510,6 +1510,8 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(st7789_map_bitarray_to_rgb565_obj, 3,
 #define JPG_MODE_FAST (0)
 #define JPG_MODE_SLOW (1)
 #define JPG_MODE_STRIP (2)
+#define JPG_MODE_FILL (3)
+#define JPG_FILL_ROWS (8)
 
 // User defined device identifier
 typedef struct {
@@ -1642,9 +1644,7 @@ static int out_slow(                                    // 1:Ok, 0:Aborted
 // 16x16 block, STRIP needs one window/transfer per full-width 16-pixel strip.
 // At 320 pixels wide that is 20 times fewer display transactions, using the
 // same 10 KB resident buffer already reserved for terminal text.
-static int out_strip(JDEC *jd, void *bitmap, JRECT *rect) {
-    IODEV *dev = (IODEV *)jd->device;
-    st7789_ST7789_obj_t *self = dev->self;
+static void copy_strip(IODEV *dev, const void *bitmap, const JRECT *rect) {
     const uint8_t *src = bitmap;
     size_t stride = 2 * dev->wfbuf;
     size_t row_bytes = 2 * (rect->right - rect->left + 1);
@@ -1654,13 +1654,60 @@ static int out_strip(JDEC *jd, void *bitmap, JRECT *rect) {
         src += row_bytes;
         dst += stride;
     }
+}
+
+static int out_strip(JDEC *jd, void *bitmap, JRECT *rect) {
+    IODEV *dev = (IODEV *)jd->device;
+    st7789_ST7789_obj_t *self = dev->self;
+    copy_strip(dev, bitmap, rect);
     if (rect->right + 1 == jd->width) {
         set_window(self, jd->x_offs, jd->y_offs + rect->top,
             jd->x_offs + jd->width - 1, jd->y_offs + rect->bottom);
         DC_HIGH();
         CS_LOW();
-        write_spi(self->spi_obj, dev->fbuf, stride * (rect->bottom - rect->top + 1));
+        write_spi(self->spi_obj, dev->fbuf, 2 * dev->wfbuf * (rect->bottom - rect->top + 1));
         CS_HIGH();
+    }
+    return 1;
+}
+
+// Scale a decoded strip to the display in small batches. Copy pixels as
+// 16-bit units so the decoder's SPI byte order is preserved.
+static int out_fill(JDEC *jd, void *bitmap, JRECT *rect) {
+    IODEV *dev = (IODEV *)jd->device;
+    st7789_ST7789_obj_t *self = dev->self;
+    copy_strip(dev, bitmap, rect);
+    if (rect->right + 1 != jd->width) {
+        return 1;
+    }
+
+    const uint16_t *source = (const uint16_t *)dev->fbuf;
+    uint16_t *scaled = (uint16_t *)dev->fbuf + jd->width * jd->msy * 8;
+    unsigned int width = self->width, height = self->height;
+    unsigned int first = (rect->top * height + jd->height - 1) / jd->height;
+    unsigned int end = ((rect->bottom + 1) * height + jd->height - 1) / jd->height;
+    for (unsigned int y = first; y < end; ) {
+        unsigned int rows = MIN(JPG_FILL_ROWS, end - y);
+        unsigned int previous = jd->height;
+        for (unsigned int row = 0; row < rows; ++row) {
+            unsigned int src_y = (y + row) * jd->height / height;
+            uint16_t *dst = scaled + row * width;
+            if (src_y == previous) {
+                memcpy(dst, dst - width, width * sizeof(uint16_t));
+            } else {
+                const uint16_t *src = source + (src_y - rect->top) * jd->width;
+                for (unsigned int x = 0; x < width; ++x) {
+                    dst[x] = src[x * jd->width / width];
+                }
+                previous = src_y;
+            }
+        }
+        set_window(self, 0, y, width - 1, y + rows - 1);
+        DC_HIGH();
+        CS_LOW();
+        write_spi(self->spi_obj, (const uint8_t *)scaled, 2 * width * rows);
+        CS_HIGH();
+        y += rows;
     }
     return 1;
 }
@@ -1717,6 +1764,9 @@ static mp_obj_t st7789_ST7789_jpg(size_t n_args, const mp_obj_t *args) {
             if (mode == JPG_MODE_FAST) {
                 bufsize = 2 * jdec.width * jdec.height;
                 outfunc = out_fast;
+            } else if (mode == JPG_MODE_FILL) {
+                bufsize = 2 * (jdec.width * jdec.msy * 8 + self->width * JPG_FILL_ROWS);
+                outfunc = out_fill;
             } else if (mode == JPG_MODE_STRIP) {
                 bufsize = 2 * jdec.width * jdec.msy * 8;
                 outfunc = out_strip;
@@ -2601,6 +2651,7 @@ static const mp_map_elem_t st7789_module_globals_table[] = {
     {MP_ROM_QSTR(MP_QSTR_FAST), MP_ROM_INT(JPG_MODE_FAST)},
     {MP_ROM_QSTR(MP_QSTR_SLOW), MP_ROM_INT(JPG_MODE_SLOW)},
     {MP_ROM_QSTR(MP_QSTR_STRIP), MP_ROM_INT(JPG_MODE_STRIP)},
+    {MP_ROM_QSTR(MP_QSTR_FILL), MP_ROM_INT(JPG_MODE_FILL)},
     {MP_ROM_QSTR(MP_QSTR_MADCTL_MY), MP_ROM_INT(ST7789_MADCTL_MY)},
     {MP_ROM_QSTR(MP_QSTR_MADCTL_MX), MP_ROM_INT(ST7789_MADCTL_MX)},
     {MP_ROM_QSTR(MP_QSTR_MADCTL_MV), MP_ROM_INT(ST7789_MADCTL_MV)},

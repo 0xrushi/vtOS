@@ -139,12 +139,41 @@ def test_yt_option_parsing_and_presets(yp, monkeypatch):
     assert yt.PRESETS["smooth"] == (256, 144, 30)
     assert yt.PRESETS["fast"] == (176, 96, 60)
     assert yt.PRESETS["full"] == (320, 240, 30)
+    assert yt.PRESETS["clear"] == (256, 144, 8)
+    assert yt.parse_options(["--clear", "cats"]) == ("clear", ["cats"])
     for w, h, fps in yt.PRESETS.values():
-        assert w * 16 * 2 <= 10240 and 30 <= fps <= 60
+        assert w * 16 * 2 <= 10240 and 5 <= fps <= 60
 
 
-@pytest.mark.parametrize("strip,expected_fps", [(True, 30), (False, 10)])
-def test_player_drains_burst_and_draws_only_newest_frame(yp, monkeypatch, capsys, strip, expected_fps):
+@pytest.mark.parametrize("host,options,expected", [
+    ("100.96.103.69", [], "clear"),
+    ("100.96.103.69", ["--smooth"], "smooth"),
+    ("192.168.1.10", [], "smooth"),
+    ("192.168.1.10", ["--clear"], "clear"),
+])
+def test_yt_uses_clear_by_default_only_on_tailnet(yp, monkeypatch, host, options, expected):
+    from types import SimpleNamespace
+    monkeypatch.setitem(sys.modules, "ytproto", yp)
+    spec = importlib.util.spec_from_file_location("vtos_yt_preset_test", ROOT / "modules/scripts/bin/yt.py")
+    yt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(yt)
+    session = SimpleNamespace(client=object(), close=lambda: None)
+    profile = dict(alias="yt", host=host, port=22, user="video", password="test")
+    fake_ssh = SimpleNamespace(load_profiles=lambda: [profile], SSHSession=lambda *args: session,
+                               is_tailnet_host=lambda target: target == "100.96.103.69")
+    monkeypatch.setitem(sys.modules, "bin", SimpleNamespace(ssh=fake_ssh))
+    played = []
+    monkeypatch.setattr(yt, "play", lambda env, client, query, preset: played.append((query, preset)))
+    yt.main(SimpleNamespace(tft=object()), options + ["video", "query"])
+    assert played == [("video query", expected)]
+
+
+@pytest.mark.parametrize("strip,preset,expected_fps", [
+    (True, "smooth", 30), (False, "smooth", 10),
+    (True, "clear", 8), (False, "clear", 5),
+    (True, "fluid", 15), (False, "fluid", 10),
+])
+def test_player_drains_burst_and_draws_only_newest_frame(yp, monkeypatch, capsys, strip, preset, expected_fps):
     import itertools
     import types
 
@@ -184,13 +213,69 @@ def test_player_drains_burst_and_draws_only_newest_frame(yp, monkeypatch, capsys
     env = types.SimpleNamespace(tft=types.SimpleNamespace(
         jpg=lambda *args: draws.append(args), fill=lambda color: fills.append(color)),
         audio=None, sd_busy=False)
-    assert yt.play(env, client, "test") == "end"
+    assert yt.play(env, client, "test", preset) == "end"
+    quality = {"clear": b"--quality 3", "fluid": b"--quality 9"}.get(preset)
+    if quality:
+        assert quality in client.sent[0]
+    else:
+        assert b"--quality" not in client.sent[0]
     assert draws == [(b"new", 32, 48, 2 if strip else 1)]
     assert fills == [0]
     assert b"--fps %d" % expected_fps in client.sent[0]
     assert client.sent[-1] == b"q"
     assert env.sd_busy is False
     assert "1 frames drawn, 1 skipped" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("fill", [False, True])
+def test_live_queue_caps_backlog_and_drains_in_order(yp, monkeypatch, capsys, fill):
+    import sys
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(sys.modules, "ytproto", yp)
+    display = SimpleNamespace(SLOW=1, STRIP=2)
+    if fill:
+        display.FILL = 3
+    monkeypatch.setitem(sys.modules, "st7789", display)
+    power_modes = []
+    wifi = SimpleNamespace(isconnected=lambda: True, PM_NONE=0,
+                           config=lambda *args, **kwargs: power_modes.append(kwargs["pm"]) if kwargs else 1)
+    monkeypatch.setitem(sys.modules, "network", SimpleNamespace(STA_IF=0, WLAN=lambda _: wifi))
+    spec = importlib.util.spec_from_file_location("vtos_yt_ram_queue", ROOT / "modules/scripts/bin/yt.py")
+    yt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(yt)
+    now = 0
+    draws = []
+    sent = []
+    chunks = [yp.MARKER + packet(b"M", b'{"w":128,"h":72}'),
+              b"".join(packet(b"V", bytes([i])) for i in range(20)),
+              packet(b"E", b"end")]
+
+    def sleep(ms):
+        nonlocal now
+        now += ms
+
+    def readinto(buf):
+        data = chunks.pop(0)
+        buf[:len(data)] = data
+        return len(data)
+
+    client = SimpleNamespace(readinto=readinto, write=sent.append)
+    monkeypatch.setattr(yt, "select", SimpleNamespace(
+        select=lambda r, *_: (r if r == [client] and chunks else [], [], [])))
+    monkeypatch.setattr(yt, "time", SimpleNamespace(ticks_ms=lambda: now, sleep_ms=sleep,
+                        ticks_diff=lambda a, b: a - b, ticks_add=lambda a, b: a + b))
+    env = SimpleNamespace(tft=SimpleNamespace(fill=lambda _: None,
+                          jpg=lambda frame, x, y, mode: draws.append((now, frame[0], x, y, mode))),
+                          audio=None, sd_busy=False)
+    assert yt.play(env, client, "test", "queued") == "end"
+    position = (0, 0, 3) if fill else (96, 84, 2)
+    assert draws == [(i * 1000 // 30, i + 2, *position) for i in range(18)]
+    assert (b"--w 96 --h 72 --fps 30 --fit cover --quality 12" if fill
+            else b"--w 128 --h 72 --fps 30 --quality 12") in sent[0]
+    assert "18 frames drawn, 2 skipped" in capsys.readouterr().out
+    assert power_modes == [0, 1]
+    assert env.sd_busy is False
 
 
 def test_lan_server_leaves_control_bytes_after_command():

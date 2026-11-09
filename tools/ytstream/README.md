@@ -22,6 +22,11 @@ Try it from the server shell. These need no network:
 
 ## On the T-Deck
 
+For a remote server reachable through Tailscale, install the updated native
+firmware, connect Wi-Fi, run `tailscale up`, and use the server's Tailscale
+IPv4 address as `HostName` below. SSH and playback commands stay the same.
+See [Tailscale setup and troubleshooting](../../docs/TAILSCALE.md).
+
 Add the server to `/flash/.ssh/config` (same file the `ssh` command uses):
 
     Host yt
@@ -34,7 +39,10 @@ Then: `yt big buck bunny` or `yt https://www.youtube.com/watch?v=...`
 
 | Option | Picture | Target rate |
 | --- | --- | --- |
-| `--smooth` (default) | 256x144 | 30 fps |
+| `--clear` (Tailscale default) | 256x144, less JPEG compression | 8 fps |
+| `--fluid` | 160x90, moderate JPEG compression | 15 fps |
+| `--queued` | 96x72 cropped to 4:3 and scaled to fill 320x240, 18-frame queue in RAM | 30 fps |
+| `--smooth` (LAN default) | 256x144 | 30 fps |
 | `--full` | 320x240 (cropped to fill) | 30 fps |
 | `--fast` | 176x96 | 60 fps |
 | `--tiny` | 128x80 | 60 fps |
@@ -43,6 +51,13 @@ These are requested stream rates. Actual display rate depends on video
 complexity, Wi-Fi, SSH and audio load; it is printed on exit along with draw
 time and skipped frames. A 30 fps stream of 3 KB JPEGs needs about 90 KB/s
 before audio and SSH overhead; 60 fps doubles the video bandwidth.
+`yt --queued yt <url>` starts after up to 500 ms of buffering from the first
+frame, then plays the frames in order. It releases each frame after drawing
+and drops the oldest pending frame if all 18 slots are full. The video
+stays in RAM and streams over the same SSH connection, including Tailscale.
+The updated display driver enlarges the frames on the T-Deck. Older firmware
+displays a centered 128x72 picture in this mode. Queued playback temporarily
+disables Wi-Fi power saving to reduce packet delays and restores it on exit.
 `--full` fills the entire display without stretching: widescreen video is
 cropped at the sides. Other presets show the complete picture. On legacy
 firmware, full-screen playback requests 5 fps to leave time for audio.
