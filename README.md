@@ -27,6 +27,19 @@ This project is optimized for the **LilyGO T-Deck**.
 | **Microphone** | I2S, ES7210 ADC | ❌ Noise issues |
 | **Touchscreen** | GT911 | N/A |
 
+### What works at a glance
+
+Full list with caveats: [FEATURES.md](FEATURES.md).
+
+- **Verified on a device:** the dual-boot loader, IQ tone transmitter (checked
+  on a HackRF), Wi-Fi `sniff`, BLE `blescan`, SSH profiles and the Alt+D launcher.
+- **Built, not fully tested yet:** the `agent` chat app (tested against a fake
+  model server, not a real one), `yt` YouTube viewer (server tested, not run on
+  the T-Deck), and `wardrive` with the Plus's real GPS (only a synthetic fix so far).
+- **The hardware can't do:** IR, NFC, record-and-replay of simple sub-GHz
+  remotes (the radio is a LoRa chip), 5 GHz Wi-Fi, Bluetooth Classic, and
+  running AI models on the device.
+
 ### T-Deck Plus keyboard input
 
 The Plus connects its GPS to GPIO 43/44, which are also the default UART0 console pins. With the UART REPL enabled, GPS traffic can corrupt terminal input and make the keyboard appear unresponsive. This board definition disables the UART REPL; USB and the on-device keyboard remain available.
@@ -110,6 +123,15 @@ This firmware is fully compatible with [Launcher](https://bmorcelli.github.io/La
 3. **Boot and Install**: Insert the MicroSD card into your T-Deck and power it on. Using the Launcher interface on the device's screen, navigate to your SD card and select the `vtOS` binary to flash it.
 
 
+## Dual boot and feature status
+
+Want vtOS and the RF lab (IQ tone transmitter) on one device?
+
+- How the dual-boot loader works, why it exists, and the flash commands:
+  [utils/dualboot/README.md](utils/dualboot/README.md).
+- The IQ tone explained: [docs/IQTONE.md](docs/IQTONE.md).
+- What is supported and what is missing: [FEATURES.md](FEATURES.md).
+
 ## 📝 How to use
 
 ### Trackball Usage
@@ -127,6 +149,11 @@ During SSH, rolling up/down scrolls the T-Deck's local terminal history instead 
 Holding Backspace deletes once immediately, then repeats after 400 ms at 60 ms intervals. Releasing it stops repetition. This works locally and over SSH on keyboard firmware that supports raw held-key reporting; older controllers retain normal single-press behavior.
 
 ### SSH profiles
+
+For SSH and YouTube streaming to a server's Tailscale IP, connect Wi-Fi, run
+`tailscale up`, and use the server's numeric `100.x.y.z` address in the SSH
+profile. The first join prompts for an auth key; startup stays manual.
+See [Tailscale setup](docs/TAILSCALE.md) for firmware and server instructions.
 
 If `/flash/.ssh/config` (or `/sd/.ssh/config`) exists, `ssh` can use its `Host` entries, much like lazyssh. Run `ssh` with no arguments to pick a profile from the same minimal picker as the launcher, or `ssh <name>` to connect directly. Without a config, `ssh <host> [port] [user] [password]` works as before.
 
@@ -179,7 +206,7 @@ You can execute the following commands from the built-in shell:
 | `md` | Markdown/plain text file viewer; open a `.md`, `.markdown` or `.txt` file |
 | `menu` | An interactive shortcut menu for commands. |
 | `mines` | Opens the minesweeper clone |
-| `nm` | TUI Network Manager. Can also be used as a command line tool |
+| `nm` | Network Manager. Saves the last successful Wi-Fi connection and reconnects at boot |
 | `ping` | Used to test the reachability of a given host |
 | `play` | Audio player that supports WAV, MP3 and C2 (Codec 2) encoded files. |
 | `pop3` | POP3 email client; connect with `pop3 <host> <user> <password> [port]` |
@@ -191,6 +218,7 @@ You can execute the following commands from the built-in shell:
 | `spectrum` | Live 2.4 GHz spectrum meter; hops channels with the WiFi sniffer and shows per-channel frame counts, type split, peak RSSI and unique AP counts. RX only. Try `menu spectrum` |
 | `neofetch` | System summary: OS, uptime, CPU and temperature, heap/PSRAM, flash/SD usage, battery, network. Also in the Alt+D launcher. |
 | `ssh` | SSH Client; connect to a remote ssh server |
+| `tailscale` | Manually join/leave a Tailscale tailnet over Wi-Fi; `up`, `down`, `status`, `ip`, `peers`, `configure` |
 | `sshd` | SSH Server; runs in the background, shares this device's shell. |
 | `sniff` | Passive 802.11 sniffer (modwifi); captures your own network's traffic to a `.pcap` for Wireshark. Takes exclusive radio use. |
 | `stream` | Streams internet radio (MP3 over HTTP); pass a URL, or use `menu stream` for saved stations |
@@ -215,12 +243,13 @@ Example `/flash/.shellrc`:
 # default font
 fc terminus_mpy_12
 
-# connect to wifi
-nm connect MyNetwork "my wifi password"
-
 # launches the interactive menu
 menu
 ```
+
+Connect once with `nm` to save the network on the T-Deck. Startup begins
+reconnecting in the background. Use `nm reconnect` to retry manually or
+`nm forget` to disconnect and remove the saved profile.
 
 ### Still not sure where to start?
 
@@ -248,6 +277,7 @@ source $HOME/esp/esp-idf/export.sh
 
 # Build the MicroPython Cross-Compiler
 make -C /path/to/micropython/mpy-cross
+export MICROPY_MPYCROSS=/path/to/micropython/mpy-cross/build/mpy-cross
 
 # Navigate to the T-Deck port directory.
 cd /path/to/micropython/ports/esp32
@@ -348,9 +378,3 @@ strips: `yt --smooth <words>` targets 256x144 at 30 fps, and
 and depend on device/network throughput; playback prints measured FPS on exit.
 Setup, protocol and limits are in
 [tools/ytstream/README.md](tools/ytstream/README.md).
-
-## Dual boot and feature status
-
-- How the dual-boot loader works, why it exists, and the flash commands:
-  [utils/dualboot/README.md](utils/dualboot/README.md).
-- What is supported and what is missing: [FEATURES.md](FEATURES.md).

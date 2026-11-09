@@ -11,7 +11,28 @@ import sys
 import modssh
 
 _CONNECT_TIMEOUT_MS = 15000
+_TAILNET_CONNECT_TIMEOUT_MS = 45000
 _READ_CHUNK = 256
+
+
+def is_tailnet_host(host):
+    """Numeric Tailscale IPv4 only: 100.64.0.0 through 100.127.255.255."""
+    parts = host.split(".")
+    if len(parts) != 4 or any(not p or len(p) > 3 or (len(p) > 1 and p[0] == "0") or
+                            any(c < "0" or c > "9" for c in p) for p in parts):
+        return False
+    octets = [int(p) for p in parts]
+    return octets[0] == 100 and 64 <= octets[1] <= 127 and all(n <= 255 for n in octets)
+
+
+def connect_error(code):
+    return {
+        -2010: "Tailscale is disconnected; connect Wi-Fi and run tailscale up",
+        -2011: "Tailscale peer unavailable; check its IP, device approval and tailnet access rules",
+        -2012: "Tailscale connection timed out; check peer connectivity and tailnet access to SSH",
+        -2013: "cannot bind SSH to the Tailscale interface; reconnect with tailscale down/up",
+    }.get(code)
+
 
 class SSHSession:
     def __init__(self, host, port, username, password):
@@ -21,20 +42,24 @@ class SSHSession:
         print(f"Connecting to {host}:{port}...\n")
         self.client.connect(host, port, username, password)
 
-        waited_ms = 0
-        while self.client.status() == modssh.CONNECTING:
-            time.sleep_ms(10)
-            waited_ms += 10
-            if waited_ms >= _CONNECT_TIMEOUT_MS:
-                self.client.disconnect()
-                raise OSError("connect timed out")
+        tailnet = is_tailnet_host(host)
+        timeout = _TAILNET_CONNECT_TIMEOUT_MS if tailnet else _CONNECT_TIMEOUT_MS
+        begin = time.ticks_ms()
+        try:
+            while self.client.status() == modssh.CONNECTING:
+                time.sleep_ms(10)
+                if time.ticks_diff(time.ticks_ms(), begin) >= timeout:
+                    raise OSError(connect_error(-2012) if tailnet else "connect timed out")
 
-        if self.client.status() != modssh.CONNECTED:
-            raise OSError(
-                f"connect failed (error_code={self.client.error_code()}, "
-                f"auth_attempts={self.client.auth_attempts()}, "
-                f"last_auth_type={self.client.last_auth_type()})"
-            )
+            if self.client.status() != modssh.CONNECTED:
+                code = self.client.error_code()
+                raise OSError(connect_error(code) or (
+                    f"connect failed (error_code={code}, "
+                    f"auth_attempts={self.client.auth_attempts()}, "
+                    f"last_auth_type={self.client.last_auth_type()})"))
+        except BaseException:
+            self.client.disconnect()
+            raise
 
         self.connected = True
         print("Connected!")

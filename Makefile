@@ -63,12 +63,14 @@ build:
 			mkdir -p /opt/esp/idf/components/esp_hw_support/mspi_timing_tuning/port/esp32s3/include && \
 			source /opt/esp/idf/export.sh && \
 			make -C /opt/micropython/mpy-cross && \
+			export MICROPY_MPYCROSS=/opt/micropython/mpy-cross/build/mpy-cross && \
 			make -C /opt/micropython/ports/esp32 \
 				BOARD=$(BOARD) \
 				USER_C_MODULES=/opt/all_modules \
 				FROZEN_MANIFEST=/opt/all_modules/manifest.py && \
 			cp /opt/micropython/ports/esp32/build-$(BOARD)/firmware.bin /opt/external_build/ && \
 			cp /opt/micropython/ports/esp32/build-$(BOARD)/micropython.bin /opt/external_build/ && \
+			cp /opt/all_modules/modtailscale/THIRD_PARTY_NOTICES.md /opt/external_build/TAILSCALE_NOTICES.md && \
 			chown -R $(shell id -u):$(shell id -g) /opt/external_build/."
 
 flash:

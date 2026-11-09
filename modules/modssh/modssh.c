@@ -21,6 +21,7 @@
 #include "py/runtime.h"
 #include "py/stream.h"
 #include "py/mphal.h"
+#include "py/mpthread.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -30,6 +31,9 @@
 #include "esp_heap_caps.h" // heap_caps_malloc(MALLOC_CAP_SPIRAM), see modules/modc2/modc2_alloc.c
 
 #include "ring_buf.h"
+#include "tailscale_socket.h"
+#include "esp_timer.h"
+#include <arpa/inet.h>
 
 #include <wolfssh/ssh.h>
 #include <wolfssh/error.h>
@@ -81,6 +85,8 @@ typedef struct _ssh_client_obj_t {
   StackType_t *stack;    // PSRAM-backed, see ssh_client_connect()
   volatile ssh_state_t state;
   volatile bool stop_request;
+  bool tailnet;
+  int64_t connect_deadline;
 
   ring_buf_t rx; // SSH task (producer) -> MicroPython (consumer)
   ring_buf_t tx; // MicroPython (producer) -> SSH task (consumer)
@@ -175,15 +181,16 @@ static int ssh_user_auth(byte authType, WS_UserAuthData *authData, void *ctx) {
 // fired first.
 static int ssh_wait_fd(ssh_client_obj_t *self, int fd, bool for_write,
                        int timeout_ms) {
-  int waited = 0;
-  while (waited < timeout_ms) {
+  int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+  if (self->tailnet && deadline > self->connect_deadline) deadline = self->connect_deadline;
+  while (esp_timer_get_time() < deadline) {
     if (self->stop_request) {
       return -1;
     }
     int poll_ms = SSH_CONNECT_POLL_MS;
-    if (timeout_ms - waited < poll_ms) {
-      poll_ms = timeout_ms - waited;
-    }
+    int remaining_ms = (deadline - esp_timer_get_time()) / 1000;
+    if (remaining_ms < 1) return 0;
+    if (remaining_ms < poll_ms) poll_ms = remaining_ms;
     fd_set fds;
     FD_ZERO(&fds);
     FD_SET(fd, &fds);
@@ -195,13 +202,46 @@ static int ssh_wait_fd(ssh_client_obj_t *self, int fd, bool for_write,
     if (sel > 0 && FD_ISSET(fd, &fds)) {
       return 1;
     }
-    waited += poll_ms;
   }
   return 0;
 }
 
+// Bound every handshake read/write to the same VPN connection deadline. The
+// established session retains wolfSSH's normal blocking socket semantics.
+static int ssh_tailnet_io(ssh_client_obj_t *self, void *buf, word32 size, bool send_data) {
+  while (true) {
+    bool connecting = self->state == SSH_STATE_CONNECTING;
+    if (self->stop_request) return WS_CBIO_ERR_CONN_CLOSE;
+    if (connecting) {
+      int remaining = (self->connect_deadline - esp_timer_get_time()) / 1000;
+      int ready = remaining > 0 ? ssh_wait_fd(self, self->sockfd, send_data, remaining) : 0;
+      if (ready <= 0) {
+        self->last_error = ready < 0 ? SSH_ERR_ABORTED : VTOS_TS_ERR_TIMEOUT;
+        return WS_CBIO_ERR_TIMEOUT;
+      }
+    }
+    int n = send_data ? send(self->sockfd, buf, size, connecting ? MSG_DONTWAIT : 0)
+                      : recv(self->sockfd, buf, size, connecting ? MSG_DONTWAIT : 0);
+    if (n > 0) return n;
+    if (n == 0) return WS_CBIO_ERR_CONN_CLOSE;
+    if (errno == EINTR) continue;
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      if (connecting) continue;
+      return send_data ? WS_CBIO_ERR_WANT_WRITE : WS_CBIO_ERR_WANT_READ;
+    }
+    return WS_CBIO_ERR_GENERAL;
+  }
+}
+static int ssh_tailnet_recv(WOLFSSH *ssh, void *buf, word32 size, void *ctx) {
+  return ssh_tailnet_io(ctx, buf, size, false);
+}
+static int ssh_tailnet_send(WOLFSSH *ssh, void *buf, word32 size, void *ctx) {
+  return ssh_tailnet_io(ctx, buf, size, true);
+}
+
 static void ssh_task(void *arg) {
   ssh_client_obj_t *self = (ssh_client_obj_t *)arg;
+  self->connect_deadline = esp_timer_get_time() + (int64_t)VTOS_TS_CONNECT_MS * 1000;
 
   static bool wolfssh_lib_initialized = false;
   if (!wolfssh_lib_initialized) {
@@ -243,6 +283,20 @@ static void ssh_task(void *arg) {
     goto done;
   }
 
+  uint32_t dest_ip = ntohl(((struct sockaddr_in *)res->ai_addr)->sin_addr.s_addr);
+  self->tailnet = vtos_tailscale_ip(dest_ip);
+  if (self->tailnet) {
+    // Leave fifteen seconds for TCP plus SSH inside the 45-second budget.
+    int err = vtos_tailscale_prepare(self->sockfd, dest_ip,
+        self->connect_deadline - 15000000, &self->stop_request);
+    if (err) {
+      freeaddrinfo(res);
+      self->last_error = err;
+      self->state = err == SSH_ERR_ABORTED ? SSH_STATE_CLOSED : SSH_STATE_FAILED;
+      goto done;
+    }
+  }
+
   // Non-blocking connect(), bounded via ssh_wait_fd(); restored to
   // blocking before wolfSSH touches the fd -- wolfSSH_connect() (like
   // wolfSSH_accept(), see modsshd.c) treats WS_WANT_READ from a
@@ -268,7 +322,7 @@ static void ssh_task(void *arg) {
       goto done;
     }
     if (w == 0) {
-      self->last_error = SSH_ERR_CONNECT_TIMEOUT;
+      self->last_error = self->tailnet ? VTOS_TS_ERR_TIMEOUT : SSH_ERR_CONNECT_TIMEOUT;
       self->state = SSH_STATE_FAILED;
       goto done;
     }
@@ -292,6 +346,10 @@ static void ssh_task(void *arg) {
   }
 
   wolfSSH_SetUserAuth(self->ctx, ssh_user_auth);
+  if (self->tailnet) {
+    wolfSSH_SetIORecv(self->ctx, ssh_tailnet_recv);
+    wolfSSH_SetIOSend(self->ctx, ssh_tailnet_send);
+  }
 
   self->ssh = wolfSSH_new(self->ctx);
   if (self->ssh == NULL) {
@@ -302,6 +360,10 @@ static void ssh_task(void *arg) {
 
   wolfSSH_SetUserAuthCtx(self->ssh, (void *)self);
   wolfSSH_set_fd(self->ssh, self->sockfd);
+  if (self->tailnet) {
+    wolfSSH_SetIOReadCtx(self->ssh, self);
+    wolfSSH_SetIOWriteCtx(self->ssh, self);
+  }
   wolfSSH_SetUsername(self->ssh, self->username);
 
   // Interactive shell/PTY. Must happen BEFORE wolfSSH_connect() --
@@ -328,7 +390,7 @@ static void ssh_task(void *arg) {
       goto done;
     }
     if (w == 0) {
-      self->last_error = SSH_ERR_HANDSHAKE_TIMEOUT;
+      self->last_error = self->tailnet ? VTOS_TS_ERR_TIMEOUT : SSH_ERR_HANDSHAKE_TIMEOUT;
       self->state = SSH_STATE_FAILED;
       goto done;
     }
@@ -337,7 +399,7 @@ static void ssh_task(void *arg) {
   {
     int rc = wolfSSH_connect(self->ssh);
     if (rc != WS_SUCCESS) {
-      self->last_error = wolfSSH_get_error(self->ssh);
+      if (!self->last_error) self->last_error = wolfSSH_get_error(self->ssh);
       self->state = SSH_STATE_FAILED;
       goto done;
     }
@@ -426,6 +488,7 @@ static void ssh_task(void *arg) {
   self->state = SSH_STATE_CLOSED;
 
 done:
+  if (self->sockfd >= 0) shutdown(self->sockfd, SHUT_RDWR);
   if (self->ssh) {
     wolfSSH_shutdown(self->ssh);
     wolfSSH_free(self->ssh);
@@ -436,16 +499,20 @@ done:
     self->ctx = NULL;
   }
   if (self->sockfd >= 0) {
+    vtos_tailscale_release(self->sockfd);
     close(self->sockfd);
     self->sockfd = -1;
   }
-  self->task = NULL;
-  vTaskDelete(NULL);
+  // The owner joins this suspended task before freeing/reusing its PSRAM
+  // stack. Publishing NULL before self-deletion races the final stack use.
+  vTaskSuspend(NULL);
+  abort();
 }
 
 static mp_obj_t ssh_client_make_new(const mp_obj_type_t *type, size_t n_args,
                                     size_t n_kw, const mp_obj_t *args) {
-  ssh_client_obj_t *self = m_new_obj(ssh_client_obj_t);
+  ssh_client_obj_t *self = mp_obj_malloc_with_finaliser(ssh_client_obj_t, type);
+  memset(self, 0, sizeof(*self));
   self->base.type = type;
   self->task = NULL;
   self->stack = NULL;
@@ -469,6 +536,11 @@ static mp_obj_t ssh_client_make_new(const mp_obj_type_t *type, size_t n_args,
 
 static mp_obj_t ssh_client_connect(size_t n_args, const mp_obj_t *args) {
   ssh_client_obj_t *self = MP_OBJ_TO_PTR(args[0]);
+
+  if (self->task && eTaskGetState(self->task) == eSuspended) {
+    vTaskDelete(self->task);
+    self->task = NULL;
+  }
 
   // self->task != NULL also guards here (not just state): ssh_task() sets
   // state to FAILED/CLOSED a few lines before its own cleanup (closing
@@ -582,9 +654,28 @@ static MP_DEFINE_CONST_FUN_OBJ_1(ssh_client_last_auth_type_obj, ssh_client_last_
 static mp_obj_t ssh_client_disconnect(mp_obj_t self_in) {
   ssh_client_obj_t *self = MP_OBJ_TO_PTR(self_in);
   self->stop_request = true;
+  if (self->sockfd >= 0) shutdown(self->sockfd, SHUT_RDWR);
   return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(ssh_client_disconnect_obj, ssh_client_disconnect);
+
+static mp_obj_t ssh_client_del(mp_obj_t self_in) {
+  ssh_client_obj_t *self = MP_OBJ_TO_PTR(self_in);
+  self->stop_request = true;
+  if (self->sockfd >= 0) shutdown(self->sockfd, SHUT_RDWR);
+  // gc_sweep_all also calls this on a soft reset, while native tasks still
+  // exist. Join before GC can reclaim the object they reference.
+  MP_THREAD_GIL_EXIT();
+  while (self->task && eTaskGetState(self->task) != eSuspended) vTaskDelay(1);
+  if (self->task) { vTaskDelete(self->task); self->task = NULL; }
+  if (self->stack) { heap_caps_free(self->stack); self->stack = NULL; }
+  rb_deinit(&self->rx);
+  rb_deinit(&self->tx);
+  memset(self->password, 0, sizeof(self->password));
+  MP_THREAD_GIL_ENTER();
+  return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(ssh_client_del_obj, ssh_client_del);
 
 // Stream protocol: readinto() drains decrypted output, write() queues
 // keystrokes -- both just move bytes through the ring buffers.
@@ -636,6 +727,7 @@ static const mp_stream_p_t ssh_client_stream_p = {
 };
 
 static const mp_rom_map_elem_t ssh_client_locals_dict_table[] = {
+    {MP_ROM_QSTR(MP_QSTR___del__), MP_ROM_PTR(&ssh_client_del_obj)},
     {MP_ROM_QSTR(MP_QSTR_connect), MP_ROM_PTR(&ssh_client_connect_obj)},
     {MP_ROM_QSTR(MP_QSTR_status), MP_ROM_PTR(&ssh_client_status_obj)},
     {MP_ROM_QSTR(MP_QSTR_error_code), MP_ROM_PTR(&ssh_client_error_code_obj)},

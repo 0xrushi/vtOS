@@ -28,3 +28,14 @@ dependencies:
 
   wolfssl/wolfssl: "5.8.2"
   wolfssl/wolfssh: "1.4.20"
+
+  # Keep both components at the same revision; MicroLink's WireGuard component
+  # is nested and isn't discovered automatically by IDF Component Manager.
+  microlink:
+    git: https://github.com/CamM2325/microlink.git
+    version: 216da3300f0493b0860247d43f7af5ce29df63a5
+    path: components/microlink
+  wireguard_lwip:
+    git: https://github.com/CamM2325/microlink.git
+    version: 216da3300f0493b0860247d43f7af5ce29df63a5
+    path: components/microlink/components/wireguard_lwip

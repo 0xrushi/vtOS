@@ -20,6 +20,7 @@ target_include_directories(usermod_modssh INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../tdeck_i2s
     ${CMAKE_CURRENT_LIST_DIR}/wolfssl_shim
+    ${CMAKE_CURRENT_LIST_DIR}/../modtailscale
 )
 
 # Link against the wolfSSL/wolfSSH ESP-IDF components (see

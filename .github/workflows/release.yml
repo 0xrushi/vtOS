@@ -106,6 +106,7 @@ jobs:
       - name: Compile T-Deck Firmware Binary
         run: |
           export MPY_USER_DIR=$(pwd)/micropython
+          export MICROPY_MPYCROSS="$GITHUB_WORKSPACE/micropython/mpy-cross/build/mpy-cross"
 
           cp $GITHUB_WORKSPACE/vtOS/modules/idf_component.yml micropython/ports/esp32/main/idf_component.yml
 
@@ -147,6 +148,7 @@ jobs:
       - name: Prepare Release Artifacts
         run: |
           mkdir -p release_assets
+          cp vtOS/modules/modtailscale/THIRD_PARTY_NOTICES.md release_assets/TAILSCALE_NOTICES.md
           BUILD_DIR=micropython/ports/esp32/build-LILYGO_T_DECK
 
           # Use fallback naming if running manually without a git release tag reference context

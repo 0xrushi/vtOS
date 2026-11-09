@@ -56,6 +56,7 @@ DESCRIPTIONS = {
     "sftpd": "sftp server",
     "smtp": "mail sender",
     "ssh": "secure shell",
+    "tailscale": "tailscale vpn (manual)",
     "sshd": "ssh server",
     "sniff": "802.11 pcap sniffer",
     "spectrum": "2.4ghz spectrum",

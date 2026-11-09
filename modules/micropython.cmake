@@ -31,6 +31,9 @@ include(${CMAKE_CURRENT_LIST_DIR}/tdeck_lora/micropython.cmake)
 # include the codec2 module (low-bitrate speech codec)
 include(${CMAKE_CURRENT_LIST_DIR}/modc2/micropython.cmake)
 
+# Tailscale integration also supplies the native SSH socket preparation helper.
+include(${CMAKE_CURRENT_LIST_DIR}/modtailscale/micropython.cmake)
+
 # include the modssh module (wolfSSH-backed)
 include(${CMAKE_CURRENT_LIST_DIR}/modssh/micropython.cmake)
 

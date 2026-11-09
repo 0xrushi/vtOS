@@ -81,6 +81,7 @@ class Shell:
         self.register("ping",        _app("bin.ping"))
         self.register("sshd",        _app("bin.sshd"))
         self.register("ssh",         _app("bin.ssh"))
+        self.register("tailscale",   _app("bin.tailscale"))
         self.register("sftpd",       _app("bin.sftpd"))
         self.register("webvncd",     _app("bin.webvncd"))
         self.register("vncd",        _app("bin.vncd"))
