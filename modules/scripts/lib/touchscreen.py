@@ -10,6 +10,7 @@ class GT911:
         self.bus = bus
         self.address = None
         self.point = None
+        self.remote = None   # vncd: (x, y) while held, False for one release
         for address in (0x5D, 0x14):
             try:
                 product = self._read(address, 0x8140, 4)
@@ -27,6 +28,13 @@ class GT911:
 
     def read(self):
         """Return last contact, None on release; no ready frame keeps state."""
+        r = self.remote
+        if r is not None:
+            if r is False:
+                self.remote = None
+                self.point = None
+                return None
+            return r
         status = self._read(self.address, 0x814E, 1)[0]
         if not status & 0x80:
             return self.point

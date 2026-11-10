@@ -50,6 +50,7 @@
 
 #include "mpfile.h"
 #include "st7789.h"
+#include "rfb.h"
 #include "jpg/tjpgd565.h"
 #include "png/pngle.h"
 
@@ -159,7 +160,55 @@ st7789_rotation_t ORIENTATIONS_128x128[4] = {
     {0xa0, 128, 128, 3, 2}
 };
 
+// --- Shadow framebuffer -----------------------------------------------------
+// The panel cannot be read back over SPI, so remote-control servers (vncd)
+// need a copy. When enabled, every pixel byte sent to the controller is also
+// stored here (big-endian RGB565, exactly as on the wire) and the touched
+// rows are flagged. Capture is done in write_spi() by following the window set
+// by set_window() and the RAMWR data that follows it. The live framebuffer and
+// a stable transmission snapshot cost ~300 KB of PSRAM,
+// so it is off until a server asks for it.
+#define SHADOW_MAX_ROWS 320
+static struct {
+    uint8_t *fb;
+    uint8_t *snapshot;
+    bool snapshot_valid;
+    uint16_t w, h;               // logical size = framebuffer stride
+    uint16_t x0, y0, ww, wh;     // current window
+    uint32_t pos;                // byte offset within the window
+    bool pix;                    // true while RAMWR pixel data is being sent
+    uint8_t dirty[SHADOW_MAX_ROWS];
+} shadow;
+
+static void shadow_feed(const uint8_t *buf, int len) {
+    uint32_t total = (uint32_t)shadow.ww * shadow.wh * 2;
+    while (len > 0 && total) {
+        if (shadow.pos >= total) {
+            shadow.pos = 0;      // the controller wraps to the window start
+        }
+        uint32_t px = shadow.pos >> 1;
+        uint32_t row = px / shadow.ww;
+        uint32_t col = px % shadow.ww;
+        uint32_t room = (shadow.ww - col) * 2 - (shadow.pos & 1);
+        uint32_t n = (uint32_t)len < room ? (uint32_t)len : room;
+        uint32_t y = shadow.y0 + row;
+        if (y < shadow.h) {
+            uint8_t *dst = shadow.fb + ((y * shadow.w) + shadow.x0 + col) * 2 + (shadow.pos & 1);
+            if (shadow.dirty[y] || memcmp(dst, buf, n) != 0) {
+                memcpy(dst, buf, n);
+                shadow.dirty[y] = 1;
+            }
+        }
+        shadow.pos += n;
+        buf += n;
+        len -= (int)n;
+    }
+}
+
 void write_spi(mp_obj_base_t *spi_obj, const uint8_t *buf, int len) {
+    if (shadow.fb && shadow.pix) {
+        shadow_feed(buf, len);
+    }
     #ifdef MP_OBJ_TYPE_GET_SLOT
     mp_machine_spi_p_t *spi_p = (mp_machine_spi_p_t *)MP_OBJ_TYPE_GET_SLOT(spi_obj->type, protocol);
     #else
@@ -177,6 +226,7 @@ static void st7789_ST7789_print(const mp_print_t *print, mp_obj_t self_in, mp_pr
 static void write_cmd(st7789_ST7789_obj_t *self, uint8_t cmd, const uint8_t *data, int len) {
     CS_LOW()
     if (cmd) {
+        shadow.pix = false;      // a command ends any RAMWR pixel stream
         DC_LOW();
         write_spi(self->spi_obj, &cmd, 1);
     }
@@ -215,6 +265,12 @@ void set_window(st7789_ST7789_obj_t *self, uint16_t x0, uint16_t y0, uint16_t x1
     write_cmd(self, ST7789_CASET, bufx, 4);
     write_cmd(self, ST7789_RASET, bufy, 4);
     write_cmd(self, ST7789_RAMWR, NULL, 0);
+    shadow.x0 = x0;
+    shadow.y0 = y0;
+    shadow.ww = x1 - x0 + 1;
+    shadow.wh = y1 - y0 + 1;
+    shadow.pos = 0;
+    shadow.pix = true;
 }
 
 static mp_obj_t st7789_ST7789_set_window(size_t n_args, const mp_obj_t *args) {
@@ -512,6 +568,187 @@ static mp_obj_t st7789_ST7789_line(size_t n_args, const mp_obj_t *args) {
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(st7789_ST7789_line_obj, 6, 6, st7789_ST7789_line);
+
+static mp_obj_t st7789_ST7789_shadow(mp_obj_t self_in, mp_obj_t enable) {
+    st7789_ST7789_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    if (mp_obj_is_true(enable)) {
+        if (!shadow.fb) {
+            if (self->height > SHADOW_MAX_ROWS) {
+                mp_raise_ValueError(MP_ERROR_TEXT("display too tall for shadow buffer"));
+            }
+            size_t size = (size_t)self->width * self->height * 2;
+            uint8_t *fb = heap_caps_malloc(size * 2, MALLOC_CAP_SPIRAM);
+            if (!fb) {
+                mp_raise_msg(&mp_type_MemoryError, MP_ERROR_TEXT("no PSRAM for shadow buffer"));
+            }
+            memset(fb, 0, size * 2);
+            shadow.w = self->width;
+            shadow.h = self->height;
+            shadow.fb = fb;
+            shadow.snapshot = fb + size;
+            shadow.snapshot_valid = false;
+        }
+        memset(shadow.dirty, 1, sizeof(shadow.dirty));
+        return mp_const_true;
+    }
+    if (shadow.fb) {
+        uint8_t *fb = shadow.fb;
+        shadow.fb = NULL;
+        shadow.snapshot = NULL;
+        shadow.snapshot_valid = false;
+        shadow.pix = false;
+        heap_caps_free(fb);
+    }
+    return mp_const_false;
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(st7789_ST7789_shadow_obj, st7789_ST7789_shadow);
+
+// shadow_dirty(buf): one flag byte per row into buf; returns how many are set.
+static mp_obj_t st7789_ST7789_shadow_dirty(mp_obj_t self_in, mp_obj_t buf_in) {
+    (void)self_in;
+    mp_buffer_info_t bi;
+    mp_get_buffer_raise(buf_in, &bi, MP_BUFFER_WRITE);
+    if (!shadow.fb) {
+        return MP_OBJ_NEW_SMALL_INT(0);
+    }
+    size_t rows = bi.len < shadow.h ? bi.len : shadow.h;
+    int count = 0;
+    for (size_t i = 0; i < rows; i++) {
+        ((uint8_t *)bi.buf)[i] = shadow.dirty[i];
+        count += shadow.dirty[i];
+    }
+    return MP_OBJ_NEW_SMALL_INT(count);
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(st7789_ST7789_shadow_dirty_obj, st7789_ST7789_shadow_dirty);
+
+// Snapshot all changed rows before yielding to apps or socket backpressure.
+// Later LCD writes mark the live rows dirty again for the following update.
+static mp_obj_t st7789_ST7789_shadow_snapshot(mp_obj_t self_in, mp_obj_t buf_in) {
+    (void)self_in;
+    mp_buffer_info_t bi;
+    mp_get_buffer_raise(buf_in, &bi, MP_BUFFER_WRITE);
+    if (!shadow.fb || bi.len < shadow.h) {
+        mp_raise_ValueError(MP_ERROR_TEXT("bad shadow flags buffer"));
+    }
+    int count = 0;
+    for (int y = 0; y < shadow.h; y++) {
+        ((uint8_t *)bi.buf)[y] = shadow.dirty[y];
+        if (shadow.dirty[y]) {
+            size_t offset = (size_t)y * shadow.w * 2;
+            memcpy(shadow.snapshot + offset, shadow.fb + offset, shadow.w * 2);
+            shadow.dirty[y] = 0;
+            count++;
+        }
+    }
+    shadow.snapshot_valid = true;
+    return MP_OBJ_NEW_SMALL_INT(count);
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(st7789_ST7789_shadow_snapshot_obj, st7789_ST7789_shadow_snapshot);
+
+static mp_obj_t shadow_read_row(mp_obj_t y_in, mp_obj_t buf_in, int pixel_bytes, bool big_endian) {
+    mp_buffer_info_t bi;
+    mp_get_buffer_raise(buf_in, &bi, MP_BUFFER_WRITE);
+    mp_int_t y = mp_obj_get_int(y_in);
+    size_t len = (size_t)shadow.w * pixel_bytes;
+    if (!shadow.fb || y < 0 || y >= shadow.h || bi.len < len) {
+        mp_raise_ValueError(MP_ERROR_TEXT("bad shadow row"));
+    }
+    const uint8_t *src = shadow.fb + (size_t)y * shadow.w * 2;
+    if (pixel_bytes == 2) {
+        memcpy(bi.buf, src, len);
+    } else {
+        uint8_t *dst = bi.buf;
+        for (size_t x = 0; x < shadow.w; x++, src += 2, dst += 4) {
+            uint8_t r = src[0] >> 3;
+            uint8_t g = ((src[0] & 7) << 3) | (src[1] >> 5);
+            uint8_t b = src[1] & 31;
+            dst[big_endian ? 1 : 2] = (r << 3) | (r >> 2);
+            dst[big_endian ? 2 : 1] = (g << 2) | (g >> 4);
+            dst[big_endian ? 3 : 0] = (b << 3) | (b >> 2);
+            dst[big_endian ? 0 : 3] = 0;
+        }
+    }
+    shadow.dirty[y] = 0;
+    return MP_OBJ_NEW_SMALL_INT(len);
+}
+
+// shadow_row(y, buf): copy row y as big-endian RGB565 and clear its dirty flag.
+static mp_obj_t st7789_ST7789_shadow_row(mp_obj_t self_in, mp_obj_t y_in, mp_obj_t buf_in) {
+    (void)self_in;
+    return shadow_read_row(y_in, buf_in, 2, true);
+}
+static MP_DEFINE_CONST_FUN_OBJ_3(st7789_ST7789_shadow_row_obj, st7789_ST7789_shadow_row);
+
+// shadow_row_rgb888(y, buf, big_endian): the same row in 32-bit RFB RGB888.
+static mp_obj_t st7789_ST7789_shadow_row_rgb888(size_t n_args, const mp_obj_t *args) {
+    (void)n_args;
+    return shadow_read_row(args[1], args[2], 4, mp_obj_is_true(args[3]));
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(st7789_ST7789_shadow_row_rgb888_obj, 4, 4, st7789_ST7789_shadow_row_rgb888);
+
+static rfb_format_t shadow_rfb_format(mp_obj_t obj) {
+    mp_obj_t *values;
+    mp_obj_get_array_fixed_n(obj, 8, &values);
+    int bpp = mp_obj_get_int(values[0]);
+    if (bpp != 8 && bpp != 16 && bpp != 24 && bpp != 32) {
+        mp_raise_ValueError(MP_ERROR_TEXT("bad pixel depth"));
+    }
+    rfb_format_t fmt = {.bytes = bpp / 8, .big_endian = mp_obj_is_true(values[1])};
+    for (int i = 0; i < 3; i++) {
+        mp_int_t max = mp_obj_get_int(values[2 + i]);
+        mp_int_t shift = mp_obj_get_int(values[5 + i]);
+        if (max < 1 || max > 65535 || shift < 0 || shift >= bpp ||
+            (uint32_t)max > (UINT32_MAX >> (32 - bpp + shift))) {
+            mp_raise_ValueError(MP_ERROR_TEXT("bad pixel channel"));
+        }
+        fmt.max[i] = max;
+        fmt.shift[i] = shift;
+    }
+    return fmt;
+}
+
+// shadow_pixels(y, rows, buf, format, hextile): read a band in the viewer's
+// format, optionally encoded as a row of Hextile tiles.
+static mp_obj_t st7789_ST7789_shadow_pixels(size_t n_args, const mp_obj_t *args) {
+    (void)n_args;
+    mp_int_t y = mp_obj_get_int(args[1]);
+    mp_int_t rows = mp_obj_get_int(args[2]);
+    mp_buffer_info_t bi;
+    mp_get_buffer_raise(args[3], &bi, MP_BUFFER_WRITE);
+    rfb_format_t fmt = shadow_rfb_format(args[4]);
+    bool hextile = mp_obj_is_true(args[5]);
+    if (!shadow.fb || y < 0 || rows < 1 || rows > 16 || y + rows > shadow.h) {
+        mp_raise_ValueError(MP_ERROR_TEXT("bad shadow band"));
+    }
+    size_t capacity = (size_t)shadow.w * rows * fmt.bytes + (hextile ? (shadow.w + 15) / 16 : 0);
+    if (bi.len < capacity) {
+        mp_raise_ValueError(MP_ERROR_TEXT("shadow band buffer too small"));
+    }
+    const uint8_t *src = (shadow.snapshot_valid ? shadow.snapshot : shadow.fb) + (size_t)y * shadow.w * 2;
+    size_t len;
+    if (hextile) {
+        len = rfb_hextile(src, shadow.w * 2, shadow.w, rows, bi.buf, &fmt);
+    } else {
+        uint8_t *dst = bi.buf;
+        for (size_t i = 0; i < (size_t)shadow.w * rows; i++) {
+            dst = rfb_write_pixel(dst, rfb_read565(src + i * 2), &fmt);
+        }
+        len = dst - (uint8_t *)bi.buf;
+    }
+    if (!shadow.snapshot_valid) {
+        memset(shadow.dirty + y, 0, rows);
+    }
+    return MP_OBJ_NEW_SMALL_INT(len);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(st7789_ST7789_shadow_pixels_obj, 6, 6, st7789_ST7789_shadow_pixels);
+
+// shadow_invalidate(): flag every row dirty (a new client needs a full frame).
+static mp_obj_t st7789_ST7789_shadow_invalidate(mp_obj_t self_in) {
+    (void)self_in;
+    memset(shadow.dirty, 1, sizeof(shadow.dirty));
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(st7789_ST7789_shadow_invalidate_obj, st7789_ST7789_shadow_invalidate);
 
 static mp_obj_t st7789_ST7789_blit_buffer(size_t n_args, const mp_obj_t *args) {
     st7789_ST7789_obj_t *self = MP_OBJ_TO_PTR(args[0]);
@@ -2452,6 +2689,13 @@ static const mp_rom_map_elem_t st7789_ST7789_locals_dict_table[] = {
     {MP_ROM_QSTR(MP_QSTR_pixel), MP_ROM_PTR(&st7789_ST7789_pixel_obj)},
     {MP_ROM_QSTR(MP_QSTR_line), MP_ROM_PTR(&st7789_ST7789_line_obj)},
     {MP_ROM_QSTR(MP_QSTR_blit_buffer), MP_ROM_PTR(&st7789_ST7789_blit_buffer_obj)},
+    {MP_ROM_QSTR(MP_QSTR_shadow), MP_ROM_PTR(&st7789_ST7789_shadow_obj)},
+    {MP_ROM_QSTR(MP_QSTR_shadow_dirty), MP_ROM_PTR(&st7789_ST7789_shadow_dirty_obj)},
+    {MP_ROM_QSTR(MP_QSTR_shadow_snapshot), MP_ROM_PTR(&st7789_ST7789_shadow_snapshot_obj)},
+    {MP_ROM_QSTR(MP_QSTR_shadow_row), MP_ROM_PTR(&st7789_ST7789_shadow_row_obj)},
+    {MP_ROM_QSTR(MP_QSTR_shadow_row_rgb888), MP_ROM_PTR(&st7789_ST7789_shadow_row_rgb888_obj)},
+    {MP_ROM_QSTR(MP_QSTR_shadow_pixels), MP_ROM_PTR(&st7789_ST7789_shadow_pixels_obj)},
+    {MP_ROM_QSTR(MP_QSTR_shadow_invalidate), MP_ROM_PTR(&st7789_ST7789_shadow_invalidate_obj)},
     {MP_ROM_QSTR(MP_QSTR_draw), MP_ROM_PTR(&st7789_ST7789_draw_obj)},
     {MP_ROM_QSTR(MP_QSTR_draw_len), MP_ROM_PTR(&st7789_ST7789_draw_len_obj)},
     {MP_ROM_QSTR(MP_QSTR_bitmap), MP_ROM_PTR(&st7789_ST7789_bitmap_obj)},

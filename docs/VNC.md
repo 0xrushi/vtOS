@@ -181,3 +181,65 @@ ARD security, clipboard from the T-Deck to the server (text the server copies
 is stored in the vtOS clipboard, `env.clipboard`, which Alt+V pastes; that path
 is tested only with the fake server), cursor shape (servers draw the cursor into
 the picture), VNC over Tailscale by name (numeric addresses work).
+
+# VNC server (`vncd`): control the T-Deck from your Mac
+
+```
+vncd [port]     start (default 5900); `vncd stop` to stop
+open vnc://<t-deck ip>:5900        # on the Mac (or TigerVNC / any RFB viewer)
+```
+
+Also reachable from `settings` > remote. No password: use it on a trusted LAN.
+
+## Full screen vs terminal only
+
+- **Full screen** (firmware with the ST7789 shadow framebuffer): the viewer
+  shows exactly what is on the LCD, including pixel apps (`balatro`, `rfspec`,
+  meshchat radar, the Quick Settings panel). `vncd` prints "full screen".
+- **Terminal only**: older firmware has no way to read the panel back, so only
+  the terminal text and bar are sent, as before. `vncd` prints "terminal only".
+
+The driver cannot read pixels back over SPI, so `st7789.c` keeps a live copy
+and an update snapshot in PSRAM (300 KB total). `write_spi()` follows the window
+set by `set_window()` and stores the
+RAMWR bytes (big-endian RGB565, as on the wire) and flags rows whose pixels change.
+It is off until `vncd` calls `tft.shadow(True)` and freed on `vncd stop`.
+Methods: `shadow(on)`, `shadow_dirty(buf)`, `shadow_row(y, buf)`,
+`shadow_row_rgb888(y, buf, big_endian)`, `shadow_snapshot(flags)`,
+`shadow_pixels(y, rows, buf, format, hextile)`, `shadow_invalidate()`.
+The server offers big-endian RGB565 as its native pixel format. The driver
+converts the viewer's true-color format directly and uses Hextile when the
+viewer offers it. Full-screen updates are sent as one RFB message in small
+bands from a stable snapshot. Changes during transmission stay pending for the
+next update. Hardware scrolling
+(VSCSAD) is not tracked.
+
+For RealVNC Viewer, set the saved T-Deck connection's **Picture quality** to
+**High**. Automatic quality initially selects 64 colors, making MeshChat's dark
+panels black. The server refreshes all pixels when the viewer changes format.
+
+## Input
+
+- **Keyboard**: printable keys, arrows, Home/End/PgUp/PgDn/Insert/Delete, and
+  Ctrl+letter (so Ctrl-C works), injected through `env.kvm`.
+- **Mouse**: the left button acts as a finger on the touch screen
+  (`GT911.remote`), so taps and drags work in the Quick Settings panel and in
+  apps that read touch. The trackball and keys of apps that ignore touch are not
+  mapped from the mouse.
+- Timer 3 is still used (150 ms terminal, 30 ms full screen), so `vncd`,
+  `webvncd` and `telnetd` cannot run together.
+
+## Status
+
+The host tests (`utils/tests/test_vncd.py`) cover streaming across partial sends,
+snapshot handling, Hextile negotiation, pixel formats, and input mapping. The
+native encoder passed 240 round-trip cases across six pixel formats, and the
+snapshot implementation was checked for isolation during redraws.
+
+On November 10, 2026, a live MeshChat demo frame using 32-bit pixels transferred
+17,043 bytes with Hextile in 0.65 seconds. Its raw transfer took about 1.9 seconds
+and 307,200 bytes. Chat and animated radar captures were checked. The user also
+confirmed correct MeshChat UI and colors in RealVNC Viewer after selecting High
+picture quality. The final snapshot firmware was then flashed and booted, and
+a real MeshChat frame using little-endian RGB565 transferred 7,752 bytes in
+0.66 seconds. Sustained frame rate is unmeasured.

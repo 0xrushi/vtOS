@@ -31,6 +31,8 @@ class Environment:
         # as pointer(right, down, clicked) every tick instead of the usual
         # arrow keys / Escape. See lib/trackball.py.
         self.pointer = None
+        # True while vncd has the display driver's shadow framebuffer enabled
+        self.fb_shadow = False
         # Phone-to-device clipboard (see clipd.py)
         self.clipboard = ""
         self.clipd = None
