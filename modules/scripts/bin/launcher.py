@@ -68,6 +68,7 @@ DESCRIPTIONS = {
     "telnetd": "telnet server",
     "usbmsc": "usb mass storage",
     "vi": "text editor",
+    "vnc": "vnc client",
     "vncd": "vnc server",
     "webvncd": "web vnc server",
     "wiki": "offline wikipedia",

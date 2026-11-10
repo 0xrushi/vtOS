@@ -27,6 +27,10 @@ class Environment:
         self.app_uses_radio = False
         self.volume = 70
         self.sd_busy = False
+        # Set by an app that wants the raw trackball (the VNC client): called
+        # as pointer(right, down, clicked) every tick instead of the usual
+        # arrow keys / Escape. See lib/trackball.py.
+        self.pointer = None
         # Phone-to-device clipboard (see clipd.py)
         self.clipboard = ""
         self.clipd = None

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Firefox for a small screen: a profile with a scaled-down interface. The
+# window manager (openbox, see Dockerfile) maximises the window above the panel.
+#   FIREFOX_SCALE (default 0.6): interface and page scale; raise for bigger text
+export DISPLAY="${DISPLAY:-:1}"
+SCALE="${FIREFOX_SCALE:-0.6}"
+P="$HOME/.mozilla/vtos"
+mkdir -p "$P/chrome"
+sed "s/@SCALE@/$SCALE/" /usr/share/vtos/firefox-user.js > "$P/user.js"
+cp /usr/share/vtos/firefox-userChrome.css "$P/chrome/userChrome.css"
+exec firefox-esr --no-remote --profile "$P" "$@"

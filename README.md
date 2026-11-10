@@ -228,6 +228,7 @@ You can execute the following commands from the built-in shell:
 | `telnetd` | Telnet Server; runs in the background, shares this device's shell. Unencrypted. |
 | `usbmsc` | Shares `/sd` with your PC as a USB Mass Storage drive over USB-C. |
 | `vi` | Opens the vi port (based on [neatvi](https://github.com/aligrudi/neatvi)). Includes 5 configurable themes, check `.virc` |
+| `vnc` | VNC client: `vnc <host>[:display] [password]` shows a remote desktop on the display, with the trackball as mouse and the keyboard as keys. The Mic key switches trackball mode (mouse / right-click / scroll / arrow keys), a long click quits. VNC-password or no authentication only. See [docs/VNC.md](docs/VNC.md) |
 | `vncd` | Launches a VNC Server. Known compatible with TigerVNC. Terribly slow. |
 | `webvncd` | Launches a web "VNC"-like server. Faster than `vncd` |
 | `wardrive` | GPS-tagged WiFi scan logger (WiGLE CSV + KML); T-Deck Plus only (GPS lives on GPIO 43/44) |

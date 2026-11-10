@@ -1,0 +1,5 @@
+#!/bin/sh
+# pcmanfm with smaller GTK text so its menu bar and list fit a 320-px window.
+#   PCMANFM_SCALE (default 0.6): text scale; raise for bigger text
+export GDK_DPI_SCALE="${PCMANFM_SCALE:-0.6}"
+exec /usr/bin/pcmanfm "$@"

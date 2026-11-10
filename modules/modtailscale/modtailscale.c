@@ -346,6 +346,56 @@ static mp_obj_t ts_peers(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(ts_peers_obj, ts_peers);
 
+// wait_peer("100.x.y.z", timeout_ms) -> str: this device's own tailnet address.
+// Waits until the WireGuard path to that peer is up, nudging discovery exactly
+// as the native SSH path does (vtos_tailscale_prepare), but without touching a
+// socket. The caller then bind()s an ordinary Python socket to the returned
+// address and connect()s: lwIP routes a socket bound to the tunnel address
+// through the tunnel. Errors raise OSError with the same VTOS_TS_ERR_* codes
+// SSH reports. The wait sleeps in mp_hal_delay_ms() with no lock held, so Ctrl-C
+// and a long trackball press still interrupt it.
+static mp_obj_t ts_wait_peer(mp_obj_t host_in, mp_obj_t timeout_in) {
+    struct in_addr addr;
+    if (inet_pton(AF_INET, mp_obj_str_get_str(host_in), &addr) != 1) {
+        mp_raise_ValueError(MP_ERROR_TEXT("expected a numeric IPv4 address"));
+    }
+    uint32_t ip = ntohl(addr.s_addr);
+    if (!vtos_tailscale_ip(ip)) {
+        mp_raise_ValueError(MP_ERROR_TEXT("not a Tailscale address (100.64.0.0/10)"));
+    }
+    int64_t deadline = esp_timer_get_time() + (int64_t)mp_obj_get_int(timeout_in) * 1000;
+    bool known = false;
+    int64_t last_probe = 0;
+    while (esp_timer_get_time() < deadline) {
+        lock();
+        if (!vpn || stopping || !wifi_up ||
+            microlink_get_state(vpn) != ML_STATE_CONNECTED) {
+            unlock();
+            mp_raise_OSError(VTOS_TS_ERR_DOWN);
+        }
+        LOCK_TCPIP_CORE();
+        bool peer_up = ml_wg_mgr_peer_is_up(vpn, ip);
+        for (int i = 0; i < vpn->peer_count; i++) {
+            if (vpn->peers[i].active && vpn->peers[i].vpn_ip == ip) known = true;
+        }
+        uint32_t source = microlink_get_vpn_ip(vpn);
+        UNLOCK_TCPIP_CORE();
+        if (peer_up && source) {
+            unlock();
+            return ip_object(source);
+        }
+        int64_t now = esp_timer_get_time();
+        if (now - last_probe >= 1000000) {
+            xQueueSend(vpn->vtos_connect_queue, &ip, 0);
+            last_probe = now;
+        }
+        unlock();
+        mp_hal_delay_ms(50);
+    }
+    mp_raise_OSError(known ? VTOS_TS_ERR_TIMEOUT : VTOS_TS_ERR_PEER);
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(ts_wait_peer_obj, ts_wait_peer);
+
 static const mp_rom_map_elem_t globals_table[] = {
     {MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_modtailscale)},
     {MP_ROM_QSTR(MP_QSTR_configure), MP_ROM_PTR(&ts_configure_obj)},
@@ -354,6 +404,7 @@ static const mp_rom_map_elem_t globals_table[] = {
     {MP_ROM_QSTR(MP_QSTR_status), MP_ROM_PTR(&ts_status_obj)},
     {MP_ROM_QSTR(MP_QSTR_ip), MP_ROM_PTR(&ts_ip_obj)},
     {MP_ROM_QSTR(MP_QSTR_peers), MP_ROM_PTR(&ts_peers_obj)},
+    {MP_ROM_QSTR(MP_QSTR_wait_peer), MP_ROM_PTR(&ts_wait_peer_obj)},
 };
 static MP_DEFINE_CONST_DICT(globals, globals_table);
 const mp_obj_module_t modtailscale_module = {

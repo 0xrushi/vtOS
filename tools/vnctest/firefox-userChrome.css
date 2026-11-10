@@ -1,0 +1,3 @@
+/* Give a 320x240 screen to the page: no tab strip, no bookmarks bar. */
+#TabsToolbar, #PersonalToolbar, #titlebar { visibility: collapse !important; }
+#nav-bar { padding: 0 !important; }

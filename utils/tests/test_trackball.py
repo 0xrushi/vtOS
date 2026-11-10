@@ -63,3 +63,61 @@ def test_small_movements_keep_existing_threshold(delta):
 
 def test_short_click_still_sends_escape():
     assert route(click=True, ssh=True) == (["\x1b"], [])
+
+
+# --- an app that takes the raw ball (the VNC client) -------------------------
+
+def route_pointer(horizontal=0, vertical=0, click=False):
+    tracker = SimpleNamespace(
+        get_scroll_horiz=lambda: horizontal,
+        get_scroll_vert=lambda: vertical,
+        get_click=lambda: click,
+    )
+    path = Path(__file__).resolve().parents[2] / "modules/scripts/lib/trackball.py"
+    spec = importlib.util.spec_from_file_location("vtos_trackball_pointer_test", path)
+    module = importlib.util.module_from_spec(spec)
+    with patch.dict("sys.modules", {"tdeck_trk": tracker}):
+        spec.loader.exec_module(module)
+    keys, calls = [], []
+    env = SimpleNamespace(
+        kvm=SimpleNamespace(inject=keys.append),
+        term=SimpleNamespace(scrollup=lambda: keys.append("scrollup"),
+                             scrolldown=lambda: keys.append("scrolldown")),
+        pointer=lambda dx, dy, click: calls.append((dx, dy, click)),
+    )
+    module.poll(env)
+    return keys, calls
+
+
+def test_pointer_hook_gets_raw_deltas_with_down_positive():
+    keys, calls = route_pointer(horizontal=3, vertical=5)       # right 3, up 5
+    assert calls == [(3, -5, False)]
+    assert keys == []
+
+
+def test_pointer_hook_sees_single_pulses_the_arrow_threshold_would_drop():
+    assert route_pointer(horizontal=-1, vertical=-1)[1] == [(-1, 1, False)]
+
+
+def test_pointer_hook_gets_the_click_and_no_escape_is_injected():
+    keys, calls = route_pointer(click=True)
+    assert calls == [(0, 0, True)]
+    assert keys == []
+
+
+def test_pointer_hook_is_called_every_tick_even_when_idle():
+    assert route_pointer()[1] == [(0, 0, False)]       # the click must be read every tick: long press -> KeyboardInterrupt
+
+
+def test_no_hook_set_means_the_old_behaviour(monkeypatch):
+    # env.pointer exists but is None (the Environment default)
+    tracker = SimpleNamespace(get_scroll_horiz=lambda: 2, get_scroll_vert=lambda: 0,
+                              get_click=lambda: True)
+    path = Path(__file__).resolve().parents[2] / "modules/scripts/lib/trackball.py"
+    spec = importlib.util.spec_from_file_location("vtos_trackball_none_test", path)
+    module = importlib.util.module_from_spec(spec)
+    with patch.dict("sys.modules", {"tdeck_trk": tracker}):
+        spec.loader.exec_module(module)
+    keys = []
+    module.poll(SimpleNamespace(kvm=SimpleNamespace(inject=keys.append), pointer=None))
+    assert keys == ["\x1b[C", "\x1b"]

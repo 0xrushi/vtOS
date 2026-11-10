@@ -1,0 +1,4 @@
+XTerm*font: 6x13
+XTerm*background: black
+XTerm*foreground: green
+XTerm*scrollBar: false

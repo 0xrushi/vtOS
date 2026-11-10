@@ -4,6 +4,16 @@ import tdeck_trk
 
 
 def poll(env):
+    pointer = getattr(env, "pointer", None)
+    if pointer is not None:
+        # An app that wants the raw ball (the VNC client) takes it whole:
+        # (right, down, clicked) since the last tick, with no arrow keys or
+        # Escape injected. The click is still read here, so the driver's long
+        # press -> KeyboardInterrupt keeps working as the way out.
+        pointer(tdeck_trk.get_scroll_horiz(), -tdeck_trk.get_scroll_vert(),
+                tdeck_trk.get_click())
+        return
+
     horizontal = tdeck_trk.get_scroll_horiz()
     if abs(horizontal) > 1:
         env.kvm.inject("\x1b[D" if horizontal < 0 else "\x1b[C")
