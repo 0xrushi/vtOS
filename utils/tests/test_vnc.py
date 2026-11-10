@@ -33,6 +33,9 @@ def fake():
 @pytest.fixture
 def vnc(rfb, monkeypatch):
     monkeypatch.setitem(sys.modules, "rfb", rfb)     # bin/vnc.py does `import rfb`
+    cfg = _load("vtos_trackcfg_for_vnc", ROOT / "modules/scripts/lib/trackcfg.py")
+    cfg._values = cfg._defaults()
+    monkeypatch.setitem(sys.modules, "trackcfg", cfg)
     return _load("vtos_vnc_test", ROOT / "modules/scripts/bin/vnc.py")
 
 
@@ -971,3 +974,9 @@ def test_dash_z_asks_for_hextile_and_default_does_not(app, args, expected):
     threading.Timer(0.4, server.stop).start()
     app.vnc.main(app.env, args)
     assert [e for e in server.events if e[0] == "encodings"][0][1] == expected
+
+
+def test_pointer_gain_follows_the_ball_setting(vnc):
+    import trackcfg
+    trackcfg._values["gain"] = 8
+    assert [vnc.accelerate(n) for n in (1, 2, 4)] == [8, 24, 80]

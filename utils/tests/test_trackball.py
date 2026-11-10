@@ -8,7 +8,16 @@ from unittest.mock import patch
 import pytest
 
 
-def route(horizontal=0, vertical=0, click=False, ssh=False):
+def _cfg():
+    path = Path(__file__).resolve().parents[2] / "modules/scripts/lib/trackcfg.py"
+    spec = importlib.util.spec_from_file_location("trackcfg", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module._values = module._defaults()
+    return module
+
+
+def route(horizontal=0, vertical=0, click=False, ssh=False, move=None):
     tracker = SimpleNamespace(
         get_scroll_horiz=lambda: horizontal,
         get_scroll_vert=lambda: vertical,
@@ -17,7 +26,14 @@ def route(horizontal=0, vertical=0, click=False, ssh=False):
     path = Path(__file__).resolve().parents[2] / "modules/scripts/lib/trackball.py"
     spec = importlib.util.spec_from_file_location("vtos_trackball_test", path)
     module = importlib.util.module_from_spec(spec)
-    with patch.dict("sys.modules", {"tdeck_trk": tracker}):
+    cfg_path = Path(__file__).resolve().parents[2] / "modules/scripts/lib/trackcfg.py"
+    cfg_spec = importlib.util.spec_from_file_location("trackcfg", cfg_path)
+    cfg = importlib.util.module_from_spec(cfg_spec)
+    cfg_spec.loader.exec_module(cfg)
+    cfg._values = cfg._defaults()
+    if move is not None:
+        cfg._values["move"] = move
+    with patch.dict("sys.modules", {"tdeck_trk": tracker, "trackcfg": cfg}):
         spec.loader.exec_module(module)
     keys = []
     scrolled = []
@@ -76,7 +92,7 @@ def route_pointer(horizontal=0, vertical=0, click=False):
     path = Path(__file__).resolve().parents[2] / "modules/scripts/lib/trackball.py"
     spec = importlib.util.spec_from_file_location("vtos_trackball_pointer_test", path)
     module = importlib.util.module_from_spec(spec)
-    with patch.dict("sys.modules", {"tdeck_trk": tracker}):
+    with patch.dict("sys.modules", {"tdeck_trk": tracker, "trackcfg": _cfg()}):
         spec.loader.exec_module(module)
     keys, calls = [], []
     env = SimpleNamespace(
@@ -116,8 +132,17 @@ def test_no_hook_set_means_the_old_behaviour(monkeypatch):
     path = Path(__file__).resolve().parents[2] / "modules/scripts/lib/trackball.py"
     spec = importlib.util.spec_from_file_location("vtos_trackball_none_test", path)
     module = importlib.util.module_from_spec(spec)
-    with patch.dict("sys.modules", {"tdeck_trk": tracker}):
+    with patch.dict("sys.modules", {"tdeck_trk": tracker, "trackcfg": _cfg()}):
         spec.loader.exec_module(module)
     keys = []
     module.poll(SimpleNamespace(kvm=SimpleNamespace(inject=keys.append), pointer=None))
     assert keys == ["\x1b[C", "\x1b"]
+
+
+@pytest.mark.parametrize("move,delta,keys", [
+    (2, 1, []), (2, 2, ["\x1b[D"]),             # default: two pulses to move
+    (1, 1, ["\x1b[D"]),                          # most sensitive: one pulse
+    (4, 3, []), (4, 4, ["\x1b[D"]),
+])
+def test_move_setting_sets_how_many_pulses_the_shell_needs(move, delta, keys):
+    assert route(horizontal=-delta, move=move)[0] == keys

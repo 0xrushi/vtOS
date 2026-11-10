@@ -87,6 +87,7 @@ class Shell:
         self.register("webvncd",     _app("bin.webvncd"))
         self.register("vncd",        _app("bin.vncd"))
         self.register("vnc",         _app("bin.vnc"))
+        self.register("ball",        _app("bin.ball"))
         self.register("chess",       _app("bin.chess"))
         self.register("launcher",    _app("bin.launcher"))
         self.register("neofetch",    _app("bin.neofetch"))

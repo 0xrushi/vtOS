@@ -1,6 +1,7 @@
 """Route trackball input to the active application or local scrollback."""
 
 import tdeck_trk
+import trackcfg
 
 
 def poll(env):
@@ -14,12 +15,13 @@ def poll(env):
                 tdeck_trk.get_click())
         return
 
+    move = trackcfg.get("move")
     horizontal = tdeck_trk.get_scroll_horiz()
-    if abs(horizontal) > 1:
+    if abs(horizontal) >= move:
         env.kvm.inject("\x1b[D" if horizontal < 0 else "\x1b[C")
 
     vertical = tdeck_trk.get_scroll_vert()
-    if abs(vertical) > 1:
+    if abs(vertical) >= move:
         if getattr(env, "ssh_scrollback", False):
             # Plain SSH output, including Claude's screen-reader interface,
             # lives in this terminal's history. Arrow keys go to the remote

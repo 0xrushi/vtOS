@@ -69,6 +69,7 @@ DESCRIPTIONS = {
     "usbmsc": "usb mass storage",
     "vi": "text editor",
     "vnc": "vnc client",
+    "ball": "trackball sensitivity",
     "vncd": "vnc server",
     "webvncd": "web vnc server",
     "wiki": "offline wikipedia",

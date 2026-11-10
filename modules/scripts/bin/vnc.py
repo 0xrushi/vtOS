@@ -27,6 +27,7 @@ import sys
 import time
 import select
 import socket
+import trackcfg
 
 import rfb
 
@@ -173,7 +174,7 @@ def keysym_for(byte):
     return None
 
 
-_POINTER_GAIN = 4          # pixels per pulse at the slowest roll; raise for a faster pointer
+# pixels per pulse at the slowest roll: `ball gain <n>` (default 4)
 
 
 def accelerate(count):
@@ -181,7 +182,7 @@ def accelerate(count):
     fast rolls cover distance (with the gain of 4: 1 -> 4, 2 -> 12, 4 -> 40,
     8 -> 144)."""
     mag = abs(count)
-    px = _POINTER_GAIN * mag * (mag + 1) // 2
+    px = trackcfg.get("gain") * mag * (mag + 1) // 2
     return -px if count < 0 else px
 
 
