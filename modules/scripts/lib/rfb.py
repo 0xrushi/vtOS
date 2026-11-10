@@ -17,6 +17,7 @@
 import struct
 
 ENC_RAW = 0
+ENC_HEXTILE = 5
 ENC_LAST_RECT = -224
 ENC_DESKTOP_SIZE = -223
 
@@ -169,6 +170,54 @@ def vnc_auth_response(password, challenge):
 
 # --- client ---------------------------------------------------------------
 
+def decode_hextile(client, x, y, w, h, fill, raw, row_start=None, row_end=None):
+    """Parse one Hextile rectangle (16x16 tiles, row by row).
+
+    fill(x, y, w, h, pixel) paints a solid area (pixel is a big-endian RGB565
+    int); raw(x, y, w, h) must consume exactly w*h*2 bytes from the client.
+    Background and foreground colours persist across the tiles of a rectangle.
+    row_start(ty, th) / row_end() bracket each row of tiles, so a sink can
+    compose a row in memory and draw it once.
+    """
+    bg = 0
+    fg = 0
+    read = client.read
+    for ty in range(y, y + h, 16):
+        th = min(16, y + h - ty)
+        if row_start is not None:
+            row_start(ty, th)
+        for tx in range(x, x + w, 16):
+            tw = min(16, x + w - tx)
+            flags = read(1)[0]
+            if flags & 1:                      # Raw tile
+                before = client._count
+                raw(tx, ty, tw, th)
+                if client._count - before != tw * th * BYTES_PER_PIXEL:
+                    raise RFBError("rectangle handler lost sync")
+                continue
+            if flags & 2:                      # BackgroundSpecified
+                c = read(2)
+                bg = (c[0] << 8) | c[1]
+            if flags & 4:                      # ForegroundSpecified
+                c = read(2)
+                fg = (c[0] << 8) | c[1]
+            fill(tx, ty, tw, th, bg)
+            if flags & 8:                      # AnySubrects
+                count = read(1)[0]
+                coloured = flags & 16
+                for _ in range(count):
+                    if coloured:
+                        c = read(2)
+                        pix = (c[0] << 8) | c[1]
+                    else:
+                        pix = fg
+                    xy, wh = read(2)
+                    fill(tx + (xy >> 4), ty + (xy & 15),
+                         (wh >> 4) + 1, (wh & 15) + 1, pix)
+        if row_end is not None:
+            row_end()
+
+
 class Sink:
     """Receives what the server sends. Override what you use."""
 
@@ -176,6 +225,11 @@ class Sink:
         """Consume exactly w*h*2 bytes with client.read_into(); the default
         discards them."""
         client.skip(w * h * BYTES_PER_PIXEL)
+
+    def hextile_rect(self, client, x, y, w, h):
+        """Consume a Hextile rectangle; the default discards it."""
+        decode_hextile(client, x, y, w, h, lambda *a: None,
+                       lambda tx, ty, tw, th: client.skip(tw * th * BYTES_PER_PIXEL))
 
     def resize(self, width, height):
         pass
@@ -390,6 +444,8 @@ class Client:
                     sink.raw_rect(self, x, y, w, h)
                     if self._count - before != w * h * BYTES_PER_PIXEL:
                         raise RFBError("rectangle handler lost sync")
+                elif enc == ENC_HEXTILE:
+                    sink.hextile_rect(self, x, y, w, h)
                 elif enc == ENC_DESKTOP_SIZE:
                     self.width, self.height = w, h
                     sink.resize(w, h)

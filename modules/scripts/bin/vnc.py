@@ -256,7 +256,7 @@ class Screen(rfb.Sink):
     draws Raw rectangles straight from the socket, a chunk of rows at a time
     (there is no framebuffer copy in RAM)."""
 
-    CHUNK = 16384
+    CHUNK = 76800                # half a 320x240 frame: a full redraw is 2 blits
 
     def __init__(self, tft, width, height):
         self.tft = tft
@@ -274,6 +274,10 @@ class Screen(rfb.Sink):
         self.view = memoryview(self.buf)
         self.resized = False
         self.on_cut = None
+        self.band = bytearray(0)             # one row of Hextile tiles, composed in RAM
+        self.bandv = memoryview(self.band)
+        self.hx0 = self.hx1 = self.by0 = self.by1 = self.bw = 0
+        self.active = False
 
     def set_remote(self, w, h):
         self.rw = w
@@ -332,6 +336,72 @@ class Screen(rfb.Sink):
     def cut_text(self, text):
         if self.on_cut is not None:
             self.on_cut(text)
+
+    def hextile_rect(self, client, x, y, w, h):
+        """Hextile: each row of 16x16 tiles is composed in RAM (a band) and
+        sent to the display with one blit, instead of one SPI transfer per
+        sub-rectangle."""
+        if w == 0 or h == 0:
+            return
+        self.hx0 = max(x, self.vx)
+        self.hx1 = min(x + w, self.vx + self.vw)
+        bw = self.hx1 - self.hx0
+        if bw > 0 and len(self.band) < bw * 32:
+            self.band = bytearray(bw * 32)
+            self.bandv = memoryview(self.band)
+        rfb.decode_hextile(client, x, y, w, h, self._band_fill,
+                           lambda tx, ty, tw, th: self._band_raw(client, tx, ty, tw, th),
+                           self._band_start, self._band_flush)
+
+    def _band_start(self, ty, th):
+        self.by0 = max(ty, self.vy)
+        self.by1 = min(ty + th, self.vy + self.vh)
+        self.bw = self.hx1 - self.hx0
+        self.active = self.bw > 0 and self.by1 > self.by0
+
+    def _band_fill(self, x, y, w, h, pixel):
+        if not self.active:
+            return
+        x0 = max(x, self.hx0)
+        x1 = min(x + w, self.hx1)
+        y0 = max(y, self.by0)
+        y1 = min(y + h, self.by1)
+        if x1 <= x0 or y1 <= y0:
+            return
+        n = (x1 - x0) * 2
+        seg = bytes((pixel >> 8, pixel & 255)) * (x1 - x0)
+        view = self.bandv
+        bw = self.bw
+        o = ((y0 - self.by0) * bw + x0 - self.hx0) * 2
+        for _ in range(y1 - y0):
+            view[o:o + n] = seg
+            o += bw * 2
+
+    def _band_raw(self, client, tx, ty, tw, th):
+        client.read_into(self.buf, tw * th * 2)
+        if not self.active:
+            return
+        x0 = max(tx, self.hx0)
+        x1 = min(tx + tw, self.hx1)
+        y0 = max(ty, self.by0)
+        y1 = min(ty + th, self.by1)
+        if x1 <= x0 or y1 <= y0:
+            return
+        n = (x1 - x0) * 2
+        src = self.view
+        dst = self.bandv
+        bw = self.bw
+        for r in range(y0, y1):
+            i = ((r - ty) * tw + x0 - tx) * 2
+            o = ((r - self.by0) * bw + x0 - self.hx0) * 2
+            dst[o:o + n] = src[i:i + n]
+
+    def _band_flush(self):
+        if self.active:
+            self.tft.blit_buffer(self.bandv[:self.bw * (self.by1 - self.by0) * 2],
+                                 self.ox + self.hx0 - self.vx,
+                                 self.oy + self.by0 - self.vy,
+                                 self.bw, self.by1 - self.by0)
 
     def raw_rect(self, client, x, y, w, h):
         if w == 0 or h == 0:
@@ -588,7 +658,8 @@ def connect(host, port):
 
 
 def usage():
-    print("Usage: vnc <host>[:display | ::port] [password]")
+    print("Usage: vnc [-z] <host>[:display | ::port] [password]")
+    print("       -z  ask for Hextile compression (slower to draw on the T-Deck)")
     print("       vnc <alias>        (aliases: /flash/.vnc)")
     print("Mic key: trackball mode (mouse/right/scroll/keys)")
     print("Long trackball press: quit")
@@ -596,6 +667,9 @@ def usage():
 
 def main(env, args):
     args = list(args)
+    hextile = "-z" in args
+    if hextile:
+        args.remove("-z")
     if not args or args[0] in ("-h", "--help"):
         usage()
         return
@@ -630,7 +704,8 @@ def main(env, args):
         else:
             print("vnc: %s (%dx%d)" % (client.name, client.width, client.height))
             client.set_pixel_format()
-            client.set_encodings([rfb.ENC_RAW, rfb.ENC_DESKTOP_SIZE])
+            client.set_encodings(([rfb.ENC_HEXTILE] if hextile else []) +
+                                 [rfb.ENC_RAW, rfb.ENC_DESKTOP_SIZE])
             screen = Screen(env.tft, env.screen_width, env.screen_height)
             screen.on_cut = lambda text: setattr(env, "clipboard", text)
             env.sd_busy = True          # stop terminal and status bar redraws

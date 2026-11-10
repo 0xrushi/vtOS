@@ -117,11 +117,15 @@ Passwords stored here are plain text on the device, like SSH profiles.
 ## How it works (and why it can be fast enough)
 
 - The pixel format is requested as RGB565, big-endian: the display's own byte
-  order. A Raw rectangle is read from the socket in chunks of up to 16 KB and
+  order. A Raw rectangle is read from the socket in chunks of up to 75 KB (a full frame is 2 blits) and
   handed straight to the display driver: no conversion, no framebuffer copy in RAM.
-- Only Raw rectangles and desktop-resize are requested, so servers send
-  uncompressed pixels. A full 320x240 frame is 150 KB; after the first frame
-  servers only send what changed.
+- Raw and desktop-resize are requested by default (fastest on the T-Deck). `vnc -z ...` also asks for Hextile; it cuts the bytes sent about 6.5x but the Python decode costs more than the bytes save on a fast link, so it was slower to draw. Hextile sends 16x16
+  tiles as solid fills and small sub-rectangles, so flat areas such as window
+  backgrounds cost a few bytes; the client composes each row of tiles in a 10 KB band buffer and blits it once (per-sub-rectangle fills were about 6,900 SPI transfers per frame and made it slow), so it needs
+  no framebuffer. One full 320x240 desktop frame from the test server was
+  153,664 bytes as Raw and 23,459 bytes as Hextile (6.5x less; photos compress
+  far less). After the first frame servers only send what changed. A server
+  that does not offer Hextile falls back to Raw.
 - Wi-Fi power save is switched off while connected (and restored after) to keep
   the pointer responsive.
 - The trackball is taken over through `env.pointer` (see `lib/trackball.py`),
@@ -150,7 +154,7 @@ checked by hand on the device: rolling the trackball, the Mic-key modes and
 label, and the physical keyboard.
 
 Not measured: behaviour with servers other than TigerVNC, and frame rate with a
-busy desktop. Not supported: Hextile/ZRLE/Tight compression, copy-rect, TLS/VeNCrypt/
+busy desktop. Not supported: ZRLE/Tight (zlib) compression, copy-rect (needs a framebuffer copy), TLS/VeNCrypt/
 ARD security, clipboard from the T-Deck to the server (text the server copies
 is stored in the vtOS clipboard, `env.clipboard`, which Alt+V pastes; that path
 is tested only with the fake server), cursor shape (servers draw the cursor into

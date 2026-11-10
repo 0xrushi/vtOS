@@ -290,8 +290,8 @@ def test_oversized_cut_text_is_capped_and_skipped(rfb, connect):
 def test_unsupported_encoding_is_an_error_not_garbage(rfb, fake, connect):
     server, client = connect()
     client.handshake()
-    server.queue(fake.update((0, 0, 2, 2, 5, b"\0" * 8)))      # Hextile, never requested
-    with pytest.raises(rfb.RFBError, match="unsupported encoding 5"):
+    server.queue(fake.update((0, 0, 2, 2, 6, b"\0" * 8)))      # zlib, never requested
+    with pytest.raises(rfb.RFBError, match="unsupported encoding 6"):
         client.read_message(rfb.Sink())
 
 

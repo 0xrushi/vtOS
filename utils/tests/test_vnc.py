@@ -252,7 +252,7 @@ def test_full_viewport_update_is_a_few_big_blits_not_one_per_row(fake, vnc, pipe
     rect = (100, 50, 320, 240)
     tft, screen = draw(fake, vnc, pipe, BIG, VIEW, rect)
     assert check_pixels(fake, tft, screen, rect) == 320 * 240
-    assert tft.blits == 10                                   # ceil(240 / 25 rows per chunk)
+    assert tft.blits == 2                                    # 120 rows per chunk
 
 
 def test_rows_wider_than_the_default_chunk_grow_the_buffer(fake, vnc, pipe):
@@ -668,7 +668,7 @@ def app(vnc, fake, monkeypatch):
 
 def test_main_prints_usage(app, capsys):
     app.vnc.main(app.env, [])
-    assert "Usage: vnc <host>" in capsys.readouterr().out
+    assert "Usage: vnc [-z] <host>" in capsys.readouterr().out
 
 
 def test_main_needs_a_display(app, capsys):
@@ -876,3 +876,98 @@ def test_main_announces_and_reports_a_tailnet_failure(app, net, capsys):
     assert "connecting to 100.96.103.69:5901 over Tailscale" in out
     assert "cannot connect: Tailscale is down" in out
     assert app.env.sd_busy is False
+
+
+# --- Hextile ---------------------------------------------------------------------
+
+def hextile_payload(x, y, w, h, truth):
+    """Encode a rectangle as Hextile, varying tile types; truth[(px, py)] gets
+    the colour every pixel must end up with."""
+    import struct
+    out = bytearray()
+    n = 0
+    bg_state = 0
+    for ty in range(y, y + h, 16):
+        th = min(16, y + h - ty)
+        for tx in range(x, x + w, 16):
+            tw = min(16, x + w - tx)
+            kind = n % 4
+            n += 1
+            fg, other = 0xF800, 0x07E0
+            if kind in (1, 2):
+                bg_state = 0x1234 + n          # only these tiles specify a background
+            bg = bg_state                      # the others reuse the previous one
+            if kind == 0:                                   # raw tile
+                out.append(1)
+                for py in range(ty, ty + th):
+                    for px in range(tx, tx + tw):
+                        out += struct.pack(">H", 0x4000 + px + 3 * py)
+                        truth[(px, py)] = 0x4000 + px + 3 * py
+                continue
+            for py in range(ty, ty + th):
+                for px in range(tx, tx + tw):
+                    truth[(px, py)] = bg
+            if kind == 1:                                   # solid background only
+                out += bytes([2]) + struct.pack(">H", bg)
+            elif kind == 2:                                 # bg + fg, one subrect
+                out += bytes([2 | 4 | 8]) + struct.pack(">HH", bg, fg)
+                out += bytes([1, (0 << 4) | 0, ((tw - 1) << 4) | (th - 1)])
+                for py in range(ty, ty + th):
+                    for px in range(tx, tx + tw):
+                        truth[(px, py)] = fg
+            else:                                           # coloured subrects, bg reused
+                out += bytes([8 | 16]) + bytes([2])
+                out += struct.pack(">H", other) + bytes([0x00, 0x00])        # 1x1 at 0,0
+                out += struct.pack(">H", fg) + bytes([(tw - 1) << 4 | (th - 1), 0x00])
+                truth[(tx, ty)] = other
+                truth[(tx + tw - 1, ty + th - 1)] = fg
+    return bytes(out)
+
+
+@pytest.mark.parametrize("rect,viewport", [
+    ((0, 0, 40, 37), (0, 0)),                    # partial tiles on both edges
+    ((100, 50, 320, 240), (100, 50)),            # exactly the viewport
+    ((60, 30, 80, 40), (100, 50)),               # clipped at a corner
+    ((500, 400, 30, 30), (100, 50)),             # outside
+    ((0, 0, 1, 1), (0, 0)),
+])
+def test_hextile_rect_lands_on_the_right_pixels(fake, vnc, rfb, pipe, rect, viewport):
+    x, y, w, h = rect
+    server, client = pipe(700, 500)
+    tft = fake.FakeTft()
+    screen = vnc.Screen(tft, 320, 240)
+    screen.set_remote(700, 500)
+    screen.vx, screen.vy = viewport
+    truth = {}
+    server.queue(fake.update((x, y, w, h, rfb.ENC_HEXTILE,
+                              hextile_payload(x, y, w, h, truth))) + bytes([2]))
+    screen.bell = lambda: None
+    client.read_message(screen)
+    assert client.read_message(screen) == 2, "stream out of sync after the rectangle"
+    for (px, py), colour in truth.items():
+        inside = (screen.vx <= px < screen.vx + screen.vw and
+                  screen.vy <= py < screen.vy + screen.vh)
+        got = tft.screen[screen.oy + py - screen.vy][screen.ox + px - screen.vx] if inside else None
+        if inside:
+            assert got == colour, (px, py)
+    lit = sum(1 for row in tft.screen for p in row if p not in (0, None))
+    visible = sum(1 for (px, py) in truth if screen.vx <= px < screen.vx + screen.vw
+                  and screen.vy <= py < screen.vy + screen.vh)
+    assert lit == visible
+
+
+def test_hextile_is_discarded_by_a_sink_that_ignores_it(fake, rfb, pipe):
+    server, client = pipe(64, 48)
+    truth = {}
+    server.queue(fake.update((0, 0, 40, 37, rfb.ENC_HEXTILE,
+                              hextile_payload(0, 0, 40, 37, truth))) + bytes([2]))
+    client.read_message(rfb.Sink())
+    assert client.read_message(rfb.Sink()) == 2
+
+
+@pytest.mark.parametrize("args,expected", [(["-z", "pc"], [5, 0, -223]), (["pc"], [0, -223])])
+def test_dash_z_asks_for_hextile_and_default_does_not(app, args, expected):
+    server = serve(app, width=64, height=48)
+    threading.Timer(0.4, server.stop).start()
+    app.vnc.main(app.env, args)
+    assert [e for e in server.events if e[0] == "encodings"][0][1] == expected
