@@ -32,6 +32,8 @@ def fake():
 
 @pytest.fixture
 def vnc(rfb, monkeypatch):
+    monkeypatch.setitem(sys.modules, "assemblyai", _load(
+        "vtos_assemblyai_for_vnc", ROOT / "modules/scripts/lib/assemblyai.py"))
     monkeypatch.setitem(sys.modules, "rfb", rfb)     # bin/vnc.py does `import rfb`
     cfg = _load("vtos_trackcfg_for_vnc", ROOT / "modules/scripts/lib/trackcfg.py")
     cfg._values = cfg._defaults()
@@ -503,7 +505,7 @@ def test_mic_key_cycles_modes_and_shows_a_label(rig, vnc):
     r = rig()
     seen = []
     for _ in range(5):
-        r.kvm.feed(vnc.MIC_KEY)
+        r.kvm.feed(vnc.MODE_KEY)
         r.session.step(0.01)
         seen.append(r.session.mode)
     assert seen == [1, 2, 3, 0, 1]
@@ -662,7 +664,8 @@ def test_run_reports_socket_errors(rig):
 
 @pytest.fixture
 def app(vnc, fake, monkeypatch):
-    env = SimpleNamespace(tft=fake.FakeTft(), kvm=FakeKvm(), pointer=None, clipboard="",
+    kvm = FakeKvm()
+    env = SimpleNamespace(tft=fake.FakeTft(), kvm=kvm, vnc_keys=kvm, pointer=None, clipboard="",
                           screen_width=320, screen_height=240, sd_busy=False)
     monkeypatch.setattr(vnc, "load_profiles", lambda: {})
     monkeypatch.setattr(vnc, "_wifi_no_sleep", lambda: (lambda: None))
@@ -980,3 +983,136 @@ def test_pointer_gain_follows_the_ball_setting(vnc):
     import trackcfg
     trackcfg._values["gain"] = 8
     assert [vnc.accelerate(n) for n in (1, 2, 4)] == [8, 24, 80]
+
+
+def test_stdin_keys_deliver_the_mic_key_the_raw_driver_never_sends(vnc, monkeypatch):
+    """The Mic key exists only on the terminal stream (sys.stdin)."""
+    import io
+    import os
+    r, w = os.pipe()
+    monkeypatch.setattr(vnc.sys, "stdin", SimpleNamespace(buffer=os.fdopen(r, "rb", buffering=0)))
+    keys = vnc.StdinKeys()
+    one = bytearray(1)
+    assert keys.readinto(one) is None                      # nothing typed
+    os.write(w, bytes([vnc.MIC_KEY, ord("a")]))
+    assert keys.readinto(one) == 1 and one[0] == vnc.MIC_KEY
+    assert keys.readinto(one) == 1 and one[0] == ord("a")
+    os.close(w)
+
+
+# --- voice typing (Mic key) ----------------------------------------------------------
+
+class VoiceMic:
+    def __init__(self):
+        self.pcm = [b"\x10\x00" * 8000]            # 0.5 s
+        self.stopped = False
+
+    def record(self, path):
+        pass
+
+    def readinto(self, buf):
+        if not self.pcm:
+            return 0
+        data = self.pcm.pop(0)[:len(buf)]
+        buf[:len(data)] = data
+        return len(data)
+
+    def stop(self):
+        self.stopped = True
+
+    def deinit(self):
+        pass
+
+
+@pytest.fixture
+def voice(rig, vnc, monkeypatch):
+    r = rig()
+    aai = sys.modules["assemblyai"]
+    r.mic = VoiceMic()
+    r.sent = []
+    r.session.make_mic = lambda: r.mic
+    r.session.http = lambda: None
+    real_select = vnc.select.select
+    monkeypatch.setattr(vnc.select, "select", lambda rl, w, x, t: (rl, [], []) if rl[0] is r.mic else
+                        real_select(rl, w, x, t))
+    monkeypatch.setattr(aai, "load_key", lambda path=None: "key")
+    monkeypatch.setattr(aai, "transcribe", lambda wav, key, http, **kw: (
+        r.sent.append((bytes(wav[:4]), len(wav), key)) or "Hi, 5!"))
+    r.aai = aai
+    return r
+
+
+def test_mic_key_records_then_types_what_was_said(voice, vnc):
+    r = voice
+    r.kvm.feed(vnc.MIC_KEY)
+    r.session.step(0.01)
+    assert r.session.recorder is not None and r.session.hold          # REC label held
+    r.session.step(0.01)
+    assert r.session.recorder.length == 16000
+    r.kvm.feed(vnc.MIC_KEY)
+    r.session.step(0.01)
+    assert r.session.recorder is None and r.mic.stopped
+    assert r.sent == [(b"RIFF", 44 + 16000, "key")]
+    r.session.step(0.01)
+    assert r.pump(lambda: len(r.events("key")) >= 12)
+    typed = [e[2] for e in r.events("key") if e[1]]               # key-down events only
+    assert typed[:1] == [0xFFE1]                                     # Shift_L around the capital H
+    assert [k for k in typed if k != 0xFFE1] == [ord(c) for c in "Hi, 5!"]
+    assert r.session.hold is False and r.session.toast is None
+    assert r.events("pointer") == []                                # no mode change from the Mic key
+
+
+def test_mic_key_without_a_key_shows_a_label_and_records_nothing(voice, vnc, monkeypatch):
+    r = voice
+    monkeypatch.setattr(r.aai, "load_key", lambda path=None: "")
+    r.kvm.feed(vnc.MIC_KEY)
+    r.session.step(0.01)
+    assert r.session.recorder is None
+    assert any(rect[4] == 0xA800 for rect in r.tft.rects)           # red label
+
+
+def test_a_failed_transcription_types_nothing_and_frees_the_mic(voice, vnc, monkeypatch):
+    r = voice
+    def boom(*a, **k):
+        raise r.aai.VoiceError("bad")
+    monkeypatch.setattr(r.aai, "transcribe", boom)
+    r.kvm.feed(vnc.MIC_KEY)
+    r.session.step(0.01)
+    r.session.step(0.01)
+    r.kvm.feed(vnc.MIC_KEY)
+    r.session.step(0.01)
+    assert r.session.recorder is None and r.mic.stopped
+    assert r.events("key") == []
+
+
+def test_a_quick_tap_is_not_sent_for_transcription(voice, vnc):
+    r = voice
+    r.mic.pcm = []
+    r.kvm.feed(vnc.MIC_KEY)
+    r.session.step(0.01)
+    r.kvm.feed(vnc.MIC_KEY)
+    r.session.step(0.01)
+    assert r.sent == [] and r.mic.stopped and r.session.recorder is None
+
+
+def test_ending_the_session_releases_the_microphone(voice, vnc):
+    r = voice
+    r.kvm.feed(vnc.MIC_KEY)
+    r.session.step(0.01)
+    r.session.voice_abort()
+    assert r.mic.stopped and r.session.recorder is None
+
+
+def test_alt_m_still_cycles_modes_while_voice_is_idle(voice, vnc):
+    r = voice
+    r.kvm.feed(vnc.MODE_KEY)
+    r.session.step(0.01)
+    assert r.session.mode == 1 and r.session.recorder is None
+
+
+def test_ctrl_c_byte_from_the_keyboard_wrapper_quits_the_session(rig):
+    """A long trackball press that lands in the wrapper's poll arrives as byte 3."""
+    r = rig()
+    r.kvm.feed(3)
+    with pytest.raises(KeyboardInterrupt):
+        r.session.step(0.01)

@@ -290,3 +290,14 @@ def test_alt_v_pastes_once_per_alt_press(keyboard):
     native.keys = [ord("v")]
     assert read_key(terminal) is None
     assert calls == [1, 1]
+
+
+def test_alt_m_becomes_mode_key_and_plain_m_passes_through(keyboard):
+    terminal, native, bus, clock = make_terminal(keyboard)
+    bus.alt = True
+    native.keys = [ord("m")]
+    assert read_key(terminal) == 0x1E
+    assert read_key(terminal) is None
+    bus.alt = False
+    native.keys = [ord("m")]
+    assert read_key(terminal) == ord("m")

@@ -21,11 +21,12 @@ one, and Esc at the prompt cancels.
 |---|---|
 | Trackball | moves the mouse pointer (rolling fast moves further) |
 | Trackball click | left click |
-| **Mic key** | changes what the trackball does (below); a small label shows the new mode |
+| **Alt+M** | changes what the trackball does (below); a small label shows the new mode |
+| **Mic key** | voice typing: press to record (red `REC`), press again to transcribe (`WAIT`) and type the words into the remote window (below) |
 | Keyboard | types into the remote machine: letters, digits, symbols, Enter, Backspace |
 | Hold the click | quit |
 
-Mic-key modes, in order:
+Alt+M modes, in order:
 
 | Label | Trackball | Click |
 |---|---|---|
@@ -37,6 +38,20 @@ Mic-key modes, in order:
 The keyboard has no Ctrl or Esc key and does not report Alt to apps, and the
 click is press-and-release only. So there is no dragging and no key chords, and
 Escape lives in `KEYS` mode.
+
+### Voice typing
+
+One-time setup, in the vtOS shell (the key stays on the device and is never
+printed): `agent set assemblyai_key <your AssemblyAI API key>`.
+
+In `vnc`, press the Mic key and speak (up to 15 s), then press it again. The clip
+is sent to AssemblyAI over Wi-Fi (not through the VNC connection), and the
+transcript is typed into the remote machine as key presses, so the remote window
+needs a text field in focus. It is push-to-talk, not live: expect a few seconds
+of `WAIT`. A tap under 0.4 s is ignored. Labels: `NO KEY` = key not set, `ERR` =
+no Wi-Fi, a rejected key or a failed transcription (nothing is typed). Only
+ASCII/Latin-1 characters are typed. Audio is uploaded to AssemblyAI; leave the
+Mic key alone if that is not acceptable.
 
 ## Setting up the server
 
@@ -150,7 +165,7 @@ second; small updates take 3-15 ms), typed text and a full-screen redraw both
 arrived, and free heap was unchanged afterwards.
 
 The picture and colours look correct on the panel (confirmed by eye). Not yet
-checked by hand on the device: rolling the trackball, the Mic-key modes and
+checked by hand on the device: rolling the trackball, the Alt+M modes, voice typing and
 label, and the physical keyboard.
 
 Not measured: behaviour with servers other than TigerVNC, and frame rate with a

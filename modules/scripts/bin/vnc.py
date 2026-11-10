@@ -12,7 +12,7 @@
 # that scrolls to follow the pointer; the easiest setup is a server resolution
 # of 320x240 (e.g. Xvnc -geometry 320x240).
 #
-# Trackball modes (the Mic key cycles them; a small label shows the new mode):
+# Trackball modes (Alt+M cycles them; a small label shows the new mode):
 #   MOUSE   move the pointer, click = left button
 #   RIGHT   move the pointer, click = right button
 #   SCROLL  up/down/left/right = mouse wheel, click = left button
@@ -27,6 +27,7 @@ import sys
 import time
 import select
 import socket
+import assemblyai
 import trackcfg
 
 import rfb
@@ -45,7 +46,8 @@ _TOAST_MS = 1200
 _MAX_KEYS_PER_PASS = 16
 _MAX_WHEEL_PER_PASS = 4
 
-MIC_KEY = 0x1C            # the T-Deck's microphone key arrives as this byte
+MIC_KEY = 0x1C            # the T-Deck's microphone key arrives as this byte: voice typing
+MODE_KEY = 0x1E           # Alt+M (lib/keyrepeat.py): next trackball mode
 
 MODE_MOUSE = 0
 MODE_RIGHT = 1
@@ -219,7 +221,8 @@ class Pending:
 
 # 3x5 glyphs (rows top to bottom, 3 bits each) for the mode labels.
 _GLYPHS = {
-    "C": (3, 4, 4, 4, 3), "E": (7, 4, 6, 4, 7), "G": (3, 4, 5, 5, 3),
+    "A": (2, 5, 7, 5, 5), "N": (7, 5, 5, 5, 5), "P": (6, 5, 6, 4, 4),
+    "W": (5, 5, 7, 7, 5), "C": (3, 4, 4, 4, 3), "E": (7, 4, 6, 4, 7), "G": (3, 4, 5, 5, 3),
     "H": (5, 5, 7, 5, 5), "I": (7, 2, 2, 2, 7), "K": (5, 5, 6, 5, 5),
     "L": (4, 4, 4, 4, 7), "M": (5, 7, 7, 5, 5), "O": (2, 5, 5, 5, 2),
     "R": (6, 5, 6, 5, 5), "S": (3, 4, 2, 1, 6), "T": (7, 2, 2, 2, 2),
@@ -444,9 +447,28 @@ class Screen(rfb.Sink):
 
 # --- the session ---------------------------------------------------------------
 
+class StdinKeys:
+    """Keyboard bytes from the terminal stream (sys.stdin), the way ssh reads
+    them. env.kvm is the raw driver underneath: it never reports the Mic key,
+    which the keyboard wrapper (lib/keyrepeat.py) adds above it."""
+
+    def __init__(self):
+        self.stream = getattr(sys.stdin, "buffer", sys.stdin)
+
+    def readinto(self, buf):
+        if not select.select([self.stream], [], [], 0)[0]:
+            return None
+        data = self.stream.read(1)
+        if not data:
+            return None
+        buf[0] = data[0]
+        return 1
+
+
 class Session:
-    def __init__(self, env, sock, client, screen):
+    def __init__(self, env, sock, client, screen, keys=None):
         self.env = env
+        self.keys = keys if keys is not None else env.kvm
         self.sock = sock
         self.client = client
         self.screen = screen
@@ -458,6 +480,9 @@ class Session:
         self.toast = None            # (expiry ticks, display rect)
         self.pan_due = False
         self.last_pan = _ticks()
+        self.recorder = None
+        self.voice_key = None
+        self.hold = False
 
     def start(self):
         self.client.request_update(*self.screen.region(), incremental=False)
@@ -479,6 +504,7 @@ class Session:
             return "connection lost: %s" % (err,)
         finally:
             env.pointer = None
+            self.voice_abort()
 
     def step(self, timeout):
         screen = self.screen
@@ -494,20 +520,29 @@ class Session:
             elif mtype == 0:
                 client.request_update(*screen.region(), incremental=True)
         self.read_keys()
+        self.voice_pump()
         self.apply_trackball()
         self.housekeeping()
 
     # keyboard
 
     def read_keys(self):
-        kvm = self.env.kvm
+        keys = self.keys
         one = self.one
         for _ in range(_MAX_KEYS_PER_PASS):
-            if not kvm.readinto(one):
+            if not keys.readinto(one):
                 return
             byte = one[0]
-            if byte == MIC_KEY:
+            if byte == 3:
+                # The keyboard wrapper turns a KeyboardInterrupt that lands
+                # inside its poll (the trackball long press, Ctrl-C over
+                # USB) into this byte instead of raising it.
+                raise KeyboardInterrupt
+            if byte == MODE_KEY:
                 self.set_mode((self.mode + 1) % 4)
+                continue
+            if byte == MIC_KEY:
+                self.voice_toggle()
                 continue
             sym = keysym_for(byte)
             if sym is not None:
@@ -552,6 +587,88 @@ class Session:
         for _ in range(n):
             self.client.key_press(positive if delta > 0 else negative)
 
+    # voice typing (Mic key): press to record, press again to type what was said
+
+    def voice_toggle(self):
+        if self.recorder is None:
+            self.voice_start()
+        else:
+            self.voice_finish()
+
+    def label(self, text, color, hold=False):
+        """Boxed status label; hold=True keeps it up until clear_toast()."""
+        self.clear_toast()
+        rect = draw_label(self.env.tft, text, 0, 0, 0xFFFF, color)
+        self.toast = (_ticks(), rect)
+        self.hold = hold
+
+    def voice_start(self):
+        try:
+            key = assemblyai.load_key()
+            if not key:
+                raise assemblyai.VoiceError("no key")
+            if getattr(self.env, "rec", None) is not None:
+                raise assemblyai.VoiceError("microphone busy")
+            self.recorder = assemblyai.Recorder(self.make_mic, select.select)
+        except (assemblyai.VoiceError, OSError, MemoryError):
+            self.recorder = None
+            self.label("NO KEY" if not assemblyai.load_key() else "ERR", 0xA800)
+            return
+        self.voice_key = key
+        self.label("REC", 0xA800, hold=True)
+
+    def make_mic(self):
+        import hardware
+        return hardware.create_mic(sample_rate=assemblyai.RATE, mic_gain=0)
+
+    def voice_pump(self):
+        rec = self.recorder
+        if rec is not None:
+            rec.pump()
+            if rec.full:
+                self.voice_finish()
+
+    def voice_finish(self):
+        rec = self.recorder
+        self.recorder = None
+        key = self.voice_key
+        self.voice_key = None
+        try:
+            if rec.seconds < 0.4:                  # a tap, not speech
+                rec.stop()
+                self.label("ERR", 0xA800)
+                return
+            wav = rec.stop()
+            self.label("WAIT", 0xA500, hold=True)
+            text = assemblyai.transcribe(wav, key, self.http())
+        except (assemblyai.VoiceError, OSError, ValueError, MemoryError):
+            self.label("ERR", 0xA800)
+            return
+        self.hold = False
+        self.clear_toast()
+        self.type_text(text)
+        self.client.request_update(*self.screen.region(), incremental=True)
+
+    def voice_abort(self):
+        """Release the microphone if the session ends while recording."""
+        rec = self.recorder
+        self.recorder = None
+        if rec is not None:
+            try:
+                rec.stop()
+            except Exception:
+                pass
+
+    def http(self):
+        import requests
+        return requests
+
+    def type_text(self, text):
+        for ch in text:
+            sym = keysym_for(ord(ch)) if ord(ch) < 128 else None
+            if sym is not None:
+                self.client.key_press(sym, 0x41 <= sym <= 0x5A)
+
     # modes and the label
 
     def set_mode(self, mode):
@@ -568,12 +685,13 @@ class Session:
         if self.toast is not None:
             rect = self.screen.restore(*self.toast[1])
             self.toast = None
+            self.hold = False
             if rect is not None:
                 self.client.request_update(*rect, incremental=False)
 
     def housekeeping(self):
         now = _ticks()
-        if self.toast is not None and _since(self.toast[0], now) >= _TOAST_MS:
+        if self.toast is not None and not self.hold and _since(self.toast[0], now) >= _TOAST_MS:
             self.clear_toast()
         if self.pan_due and _since(self.last_pan, now) >= _PAN_MIN_MS:
             self.pan_due = False
@@ -662,7 +780,8 @@ def usage():
     print("Usage: vnc [-z] <host>[:display | ::port] [password]")
     print("       -z  ask for Hextile compression (slower to draw on the T-Deck)")
     print("       vnc <alias>        (aliases: /flash/.vnc)")
-    print("Mic key: trackball mode (mouse/right/scroll/keys)")
+    print("Alt+M: trackball mode (mouse/right/scroll/keys)")
+    print("Mic key: voice typing (agent set assemblyai_key ...)")
     print("Long trackball press: quit")
 
 
@@ -712,7 +831,8 @@ def main(env, args):
             env.sd_busy = True          # stop terminal and status bar redraws
             drew = True
             screen.set_remote(client.width, client.height)
-            reason = Session(env, sock, client, screen).run()
+            reason = Session(env, sock, client, screen,
+                             getattr(env, "vnc_keys", None) or StdinKeys()).run()
     except KeyboardInterrupt:
         reason = "closed"
     finally:

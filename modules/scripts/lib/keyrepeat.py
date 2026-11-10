@@ -12,6 +12,9 @@ _V_KEYS = (ord("v"), ord("V"))
 # Private byte the shell treats as "open the launcher" (Alt+D).
 LAUNCHER_KEY = 0x1D
 MICROPHONE_KEY = 0x1C
+# Alt+M: private byte for "next mode" (vnc), since the Mic key is voice there.
+MODE_KEY = 0x1E
+_M_KEYS = (ord("m"), ord("M"))
 _POLLIN = 1
 _POLLOUT = 4
 _POLL = 3
@@ -98,7 +101,7 @@ class KeyboardRepeatTerminal(io.IOBase):
                 key = self._one[0]
 
         now = time.ticks_ms()
-        if key in _D_KEYS or key in _V_KEYS or key == _BACKSPACE or self.repeat.due(now) or time.ticks_diff(now, self._last_state) >= 20:
+        if key in _D_KEYS or key in _V_KEYS or key == _BACKSPACE or key in _M_KEYS or self.repeat.due(now) or time.ticks_diff(now, self._last_state) >= 20:
             try:
                 self._held = self._read_held()
             except (OSError, ValueError):
@@ -112,6 +115,9 @@ class KeyboardRepeatTerminal(io.IOBase):
             # The keyboard reports ALT only in its key matrix, not in the
             # character stream, so Alt+D arrives as a plain "d".
             self._pending = LAUNCHER_KEY
+            return
+        if key in _M_KEYS and self._alt:
+            self._pending = MODE_KEY
             return
         if not self._alt:
             self._paste_latched = False
