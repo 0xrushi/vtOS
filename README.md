@@ -155,6 +155,8 @@ For SSH and YouTube streaming to a server's Tailscale IP, connect Wi-Fi, run
 profile. The first join prompts for an auth key; startup stays manual.
 See [Tailscale setup](docs/TAILSCALE.md) for firmware and server instructions.
 
+Where Wi-Fi, Tailscale and API keys are stored, and what a flash resets: [docs/SECRETS.md](docs/SECRETS.md).
+
 If `/flash/.ssh/config` (or `/sd/.ssh/config`) exists, `ssh` can use its `Host` entries, much like lazyssh. Run `ssh` with no arguments to pick a profile from the same minimal picker as the launcher, or `ssh <name>` to connect directly. Without a config, `ssh <host> [port] [user] [password]` works as before.
 
 ```
