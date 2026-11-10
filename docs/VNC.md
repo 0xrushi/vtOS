@@ -21,6 +21,8 @@ one, and Esc at the prompt cancels.
 |---|---|
 | Trackball | moves the mouse pointer (rolling fast moves further) |
 | Trackball click | left click |
+| **Touch: tap** | moves the pointer to that spot and left-clicks (sets the cursor in a text field) |
+| **Touch: swipe** | scrolls like a phone: drag up to scroll down, drag sideways to scroll sideways; the wheel acts where the finger began |
 | **Alt+M** | changes what the trackball does (below); a small label shows the new mode |
 | **Mic key** | voice typing: press to record (red `REC`), press again to transcribe (`WAIT`) and type the words into the remote window (below) |
 | Keyboard | types into the remote machine: letters, digits, symbols, Enter, Backspace |
@@ -38,6 +40,11 @@ Alt+M modes, in order:
 The keyboard has no Ctrl or Esc key and does not report Alt to apps, and the
 click is press-and-release only. So there is no dragging and no key chords, and
 Escape lives in `KEYS` mode.
+
+Touch works in every trackball mode. One finger only; a touch held still for more
+than 0.6 s does nothing, and a tap on the black border around a small desktop
+lands on the nearest edge of the picture. If the touch controller fails, touch
+is switched off for the session and the rest keeps working.
 
 ### Voice typing
 

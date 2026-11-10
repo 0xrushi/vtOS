@@ -1116,3 +1116,120 @@ def test_ctrl_c_byte_from_the_keyboard_wrapper_quits_the_session(rig):
     r.kvm.feed(3)
     with pytest.raises(KeyboardInterrupt):
         r.session.step(0.01)
+
+
+# --- touch screen --------------------------------------------------------------------
+
+def gesture(vnc, *frames):
+    """Feed (point, ms) frames to a Touch; return all events."""
+    t = vnc.Touch()
+    out = []
+    for point, now in frames:
+        out += t.update(point, now)
+    return out
+
+
+def test_a_short_still_touch_is_a_tap_at_the_first_contact(vnc):
+    assert gesture(vnc, ((50, 60), 0), ((52, 61), 50), (None, 120)) == [("tap", 50, 60)]
+
+
+def test_a_long_still_touch_is_not_a_tap(vnc):
+    assert gesture(vnc, ((50, 60), 0), ((50, 60), 700), (None, 800)) == []
+
+
+def test_wandering_a_few_pixels_still_taps_but_a_swipe_does_not(vnc):
+    assert gesture(vnc, ((50, 60), 0), ((57, 60), 40), (None, 80)) == [("tap", 50, 60)]
+    events = gesture(vnc, ((50, 60), 0), ((50, 40), 40), (None, 80))
+    assert ("tap", 50, 60) not in events and events[0] == ("grab", 50, 60)
+
+
+def test_swiping_up_scrolls_in_notches_and_keeps_the_remainder(vnc):
+    events = gesture(vnc, ((100, 200), 0), ((100, 190), 20), ((100, 170), 40),
+                     ((100, 150), 60), (None, 80))
+    assert events[0] == ("grab", 100, 200)
+    scrolls = [e for e in events if e[0] == "scroll"]
+    assert all(e[1] == 0 and e[2] < 0 for e in scrolls)          # finger up = negative
+    assert sum(e[2] for e in scrolls) == -4                      # 50 px travel -> 4 notches, 2 px left over
+    assert not any(e[0] == "tap" for e in events)
+
+
+def test_swiping_sideways_reports_horizontal_notches(vnc):
+    events = gesture(vnc, ((100, 100), 0), ((130, 101), 20), ((160, 100), 40), (None, 60))
+    assert sum(e[1] for e in events if e[0] == "scroll") == 5
+
+
+def test_a_second_touch_starts_fresh(vnc):
+    t = vnc.Touch()
+    t.update((10, 10), 0)
+    t.update((10, 60), 20)
+    t.update(None, 40)
+    assert t.update((20, 20), 100) == [] and t.update(None, 140) == [("tap", 20, 20)]
+
+
+class FakeTouch:
+    def __init__(self):
+        self.points = []
+        self.fail = False
+
+    def read(self):
+        if self.fail:
+            raise OSError("i2c")
+        return self.points.pop(0) if self.points else None
+
+
+@pytest.fixture
+def touch_rig(rig, clock):
+    r = rig(width=200, height=150)
+    r.touch = FakeTouch()
+    r.session.touch = r.touch
+    r.clock = clock
+    return r
+
+
+def run_touch(r, frames):
+    for point in frames:
+        r.touch.points.append(point)
+        r.session.step(0.001)
+        r.clock[0] += 30
+
+
+def test_tap_moves_the_pointer_there_and_left_clicks(touch_rig, rfb):
+    r = touch_rig                                   # 200x150 desktop centred: offset (60, 45)
+    run_touch(r, [(100, 90), None])
+    assert r.pump(lambda: len(r.events("pointer")) >= 3)
+    ev = r.events("pointer")
+    assert ev[0] == ("pointer", 0, 40, 45)                          # moved first
+    assert ev[1] == ("pointer", rfb.BTN_LEFT, 40, 45) and ev[2] == ("pointer", 0, 40, 45)
+    assert (r.session.px, r.session.py) == (40, 45)
+
+
+def test_tapping_the_black_border_clamps_to_the_picture_edge(touch_rig):
+    r = touch_rig
+    run_touch(r, [(2, 2), None])
+    assert r.pump(lambda: len(r.events("pointer")) >= 3)
+    assert r.events("pointer")[0][2:] == (0, 0)
+
+
+def test_swipe_up_wheels_down_at_the_start_point(touch_rig, rfb):
+    r = touch_rig
+    run_touch(r, [(100, 130), (100, 118), (100, 106), (100, 94), None])
+    assert r.pump(lambda: len(r.events("pointer")) >= 7)
+    ev = r.events("pointer")
+    assert ev[0] == ("pointer", 0, 40, 85)                          # parked where the finger began
+    buttons = [e[1] for e in ev[1:] if e[1]]
+    assert buttons and set(buttons) == {rfb.BTN_WHEEL_DOWN}
+    assert all(e[2:] == (40, 85) for e in ev)
+
+
+def test_a_failing_touch_controller_is_dropped_not_fatal(touch_rig):
+    r = touch_rig
+    r.touch.fail = True
+    r.session.step(0.001)
+    assert r.session.touch is None
+    r.session.step(0.001)                                           # session carries on
+
+
+def test_no_touch_controller_means_no_touch_handling(rig):
+    r = rig()
+    assert r.session.touch is None
+    r.session.step(0.001)

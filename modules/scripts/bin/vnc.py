@@ -217,6 +217,59 @@ class Pending:
         return dx, dy, clicks
 
 
+# --- touch ---------------------------------------------------------------------
+
+_TAP_SLOP = 8              # px a finger may wander and still be a tap
+_TAP_MAX_MS = 600          # longer than this without moving is not a tap
+_SWIPE_STEP = 12           # px of finger travel per mouse-wheel notch
+
+
+class Touch:
+    """Turns the touch screen's contact points into gestures.
+
+    update(point, now) takes the controller's current contact ((x, y) or None
+    when released) and returns events: ("tap", x, y), ("grab", x, y) when a
+    swipe starts, and ("scroll", dx_notches, dy_notches) while it continues
+    (signed like the finger's travel)."""
+
+    def __init__(self):
+        self.down = False
+        self.dragging = False
+
+    def update(self, point, now):
+        events = []
+        if point is not None:
+            x, y = point
+            if not self.down:
+                self.down = True
+                self.dragging = False
+                self.sx, self.sy = x, y
+                self.t0 = now
+                self.lx, self.ly = x, y
+                self.ax = self.ay = 0
+            else:
+                if not self.dragging and (abs(x - self.sx) >= _TAP_SLOP or
+                                          abs(y - self.sy) >= _TAP_SLOP):
+                    self.dragging = True
+                    events.append(("grab", self.sx, self.sy))
+                    self.lx, self.ly = self.sx, self.sy
+                if self.dragging:
+                    self.ax += x - self.lx
+                    self.ay += y - self.ly
+                    nx = int(self.ax / _SWIPE_STEP)
+                    ny = int(self.ay / _SWIPE_STEP)
+                    if nx or ny:
+                        self.ax -= nx * _SWIPE_STEP
+                        self.ay -= ny * _SWIPE_STEP
+                        events.append(("scroll", nx, ny))
+                self.lx, self.ly = x, y
+        elif self.down:
+            self.down = False
+            if not self.dragging and _since(self.t0, now) < _TAP_MAX_MS:
+                events.append(("tap", self.sx, self.sy))
+        return events
+
+
 # --- display -------------------------------------------------------------------
 
 # 3x5 glyphs (rows top to bottom, 3 bits each) for the mode labels.
@@ -296,6 +349,11 @@ class Screen(rfb.Sink):
 
     def region(self):
         return self.vx, self.vy, self.vw, self.vh
+
+    def to_remote(self, sx, sy):
+        """Display pixel -> remote desktop pixel (clamped to the picture)."""
+        return (self.vx + max(0, min(self.vw - 1, sx - self.ox)),
+                self.vy + max(0, min(self.vh - 1, sy - self.oy)))
 
     def follow(self, px, py):
         """Scroll the viewport so the pointer stays visible; True if moved."""
@@ -483,6 +541,8 @@ class Session:
         self.recorder = None
         self.voice_key = None
         self.hold = False
+        self.touch = getattr(getattr(env, "quickpanel", None), "touch", None)
+        self.gesture = Touch()
 
     def start(self):
         self.client.request_update(*self.screen.region(), incremental=False)
@@ -521,6 +581,7 @@ class Session:
                 client.request_update(*screen.region(), incremental=True)
         self.read_keys()
         self.voice_pump()
+        self.apply_touch()
         self.apply_trackball()
         self.housekeeping()
 
@@ -574,6 +635,28 @@ class Session:
             self.arrows(dy, KEY_DOWN, KEY_UP)
             if clicks:
                 client.key_press(KEY_ESCAPE)
+
+    def apply_touch(self):
+        """Touch screen: tap = move the pointer there and left-click; drag =
+        scroll the page under your finger (the pointer parks where it began)."""
+        if self.touch is None:
+            return
+        try:
+            point = self.touch.read()
+        except OSError:
+            self.touch = None                  # a failing controller must not end the session
+            return
+        client = self.client
+        for event in self.gesture.update(point, _ticks()):
+            kind = event[0]
+            if kind == "scroll":
+                self.wheel(-event[2], rfb.BTN_WHEEL_DOWN, rfb.BTN_WHEEL_UP)
+                self.wheel(-event[1], rfb.BTN_WHEEL_RIGHT, rfb.BTN_WHEEL_LEFT)
+                continue
+            self.px, self.py = self.screen.to_remote(event[1], event[2])
+            client.pointer_event(0, self.px, self.py)
+            if kind == "tap":
+                client.pointer_click(rfb.BTN_LEFT, self.px, self.py)
 
     def wheel(self, delta, positive, negative):
         if delta:
