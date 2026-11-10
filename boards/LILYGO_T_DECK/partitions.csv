@@ -12,6 +12,6 @@
 # Name,     Type, SubType,  Offset,   Size,      Flags
 nvs,        data, nvs,      0x9000,   0x4000,
 otadata,    data, ota,      0xd000,   0x2000,
-vtos,       app,  factory,  0x110000, 0x400000,
+vtos,       app,  factory,  0x110000, 0x340000,
 coredump,   data, coredump, 0x910000, 0x10000,
 vfs,        data, fat,      0x920000, 0x6E0000,

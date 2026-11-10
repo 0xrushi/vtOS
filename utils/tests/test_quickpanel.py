@@ -134,6 +134,20 @@ def test_overlay_keeps_live_terminal_writes_and_restores_bars(panel):
     native.draw.assert_called_once()
 
 
+def test_overlay_invalidates_pixel_app_when_closed(panel):
+    p, _, _, _, mod = panel
+    native = Mock()
+    p.env.app_display = SimpleNamespace(dirty=False)
+    p.env.term = mod.TerminalOverlay(native, p)
+    p.open()
+    p.env.term.top_bar(b'Wi-Fi ON')
+    p.close()
+    assert p.env.app_display.dirty
+    native.top_bar.assert_called_with(b'Wi-Fi ON')
+    native.top_offset.assert_not_called()
+    native.draw.assert_not_called()
+
+
 def test_notification_history_is_bounded_and_browsable(panel):
     p,*_ = panel
     for i in range(8): p.notify(str(i))
@@ -182,3 +196,13 @@ def test_gt911_missing_controller_is_optional():
     mod = module('lib/touchscreen.py','test_gt911_missing')
     bus = Mock(); bus.readfrom_mem.side_effect = OSError('absent')
     with pytest.raises(OSError,match='not found'): mod.GT911(bus)
+
+
+def test_settings_button_types_command(panel):
+    p = panel[0] if isinstance(panel, tuple) else panel
+    typed = []
+    p.env.kvm = type("K", (), {"inject": staticmethod(typed.append)})()
+    p.opened = True
+    p.tap(200, 20)
+    assert typed == ["settings\r"]
+    assert not p.opened

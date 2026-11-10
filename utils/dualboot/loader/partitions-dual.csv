@@ -8,8 +8,10 @@
 #     confirms (MicroPython/IDF example don't call
 #     esp_ota_mark_app_valid) -> next reset rolls back to the loader
 #
-# Third payload (pocket shell) lives in the space freed by shrinking iqlab to 1 MB;
-# vfs stays at 0x920000 so /flash is untouched.
+# Third payload (wadamesh, MeshCore touch firmware, app-only image about 3.55 MB)
+# took the space of the retired pocket shell + agentfs slots, and vtOS shrank from 4 MB
+# to 3.25 MB (image about 2.97 MB) to make room. nvs, coredump and vfs keep their
+# offsets, so NVS (Wi-Fi, Tailscale) and /flash are untouched.
 # Keep offsets/sizes in sync with boards/LILYGO_T_DECK/partitions.csv
 # (the vtOS build-time view) and utils/dualboot/iqlab/.
 #
@@ -17,9 +19,8 @@
 nvs,        data, nvs,      0x9000,   0x4000,
 otadata,    data, ota,      0xd000,   0x2000,
 loader,     app,  factory,  0x10000,  0x100000,
-vtos,       app,  ota_0,    0x110000, 0x400000,
-iqlab,      app,  ota_1,    0x510000, 0x100000,
-pocket,     app,  ota_2,    0x610000, 0x180000,
-agentfs,    data, spiffs,   0x790000, 0x180000,
+vtos,       app,  ota_0,    0x110000, 0x340000,
+iqlab,      app,  ota_1,    0x450000, 0x100000,
+wadamesh,   app,  ota_2,    0x550000, 0x3C0000,
 coredump,   data, coredump, 0x910000, 0x10000,
 vfs,        data, fat,      0x920000, 0x6E0000,

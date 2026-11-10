@@ -25,6 +25,7 @@ class Environment:
         self.quickpanel = None
         self.brightness = 16
         self.app_uses_radio = False
+        self.app_display = None  # pixel-based app drawing below the status bar
         self.volume = 70
         self.sd_busy = False
         # Set by an app that wants the raw trackball (the VNC client): called
@@ -36,6 +37,8 @@ class Environment:
         # Phone-to-device clipboard (see clipd.py)
         self.clipboard = ""
         self.clipd = None
+        # HTTP file server (see httpd.py)
+        self.httpd = None
         self.clip_flash_until = None
         self.paste_buf = ""
         self.update_font(font)

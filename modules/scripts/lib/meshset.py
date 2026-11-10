@@ -677,7 +677,8 @@ class SettingsMixin:
     def key_node(self, k, now):
         n = self.node_view
         if k == "ESC":
-            self.mode = "nodes"
+            self.mode = self.node_back or "nodes"
+            self.node_back = None
         elif k in ("\r", "\n", "m"):
             self._open_dm(n)
         elif k == "f":

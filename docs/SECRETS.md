@@ -29,6 +29,8 @@ Two stores on the device, plus the SD card.
 | SSH client profiles (host, user, **password**) | `/flash/.ssh/config`, `/sd/.ssh/config` | edit the file (OpenSSH-style, `Password` line) | Passwords in plain text |
 | VNC profiles (alias, host, password) | `/flash/.vnc`, `/sd/.vnc` | edit the file ([VNC.md](VNC.md)) | Passwords in plain text |
 | Phone-clipboard pairing token | `/flash/.clip.json` | `clip pair` / `clip token new` | Lost = pair the phone again |
+| HTTP file-server token | `/flash/.http.json` | `httpd new-token` | Lost = new token is generated on next start |
+| Encrypted settings backup | `/sd/backups/*.vtbk` | `settings export` | Holds every secret above (passphrase-encrypted); survives every flash because it is on the SD card. Restore with `settings import` ([details](BACKUP.md)) |
 | Meshtastic channel keys (PSKs), node name, region | `/flash/.mesh.json`, `/flash/mesh-channels.txt` | `meshchat` Settings | PSK = who can read your mesh channel |
 | Mail drafts / viewed mail | `/flash/.compose.mail`, `/flash/.view.mail` | `smtp`, `pop3` | Message text; passwords for `pop3`/`smtp` are typed on the command line each time and not stored |
 

@@ -185,6 +185,7 @@ You can execute the following commands from the built-in shell:
 
 | Command | Description |
 | :---   | :--- |
+| `balatro` | Poker deckbuilder with pixel-art cards. Pick a starting deck, clear eight antes on White Stake, and spend cash-outs on Jokers, booster packs, and vouchers. Move with the trackball or A/D, select with Space, play with Enter, discard with X, and quit with Q. |
 | `blechat` | A flood-mesh chatroom broadcast over Bluetooth LE advertising |
 | `blescan` | Passive BLE scan; lists nearby devices with address, RSSI, company ID and name |
 | `chess` | Basic chess game using unicode characters |
@@ -219,6 +220,7 @@ You can execute the following commands from the built-in shell:
 | `sftp` | SFTP Client that mounts its content as a VFS |
 | `sftpd` | SFTP Server; runs in the background |
 | `smtp` | SMTP email client; compose in `vi` and send with `smtp <host> <user> <password> [port]` |
+| `rfspec [centre_mhz [span_mhz [rbw_khz]]] [--demo]` | Sub-GHz spectrum analyzer on the LoRa chip: a live trace with peak hold plus a waterfall, pan/zoom with the trackball, selectable resolution bandwidth (62.5-500 kHz). RX only; takes the radio exclusively, so quit `meshchat` first. Defaults to your Meshtastic region's band. `--demo` shows a fake band with no radio. See [docs/RFSPEC.md](docs/RFSPEC.md) |
 | `spectrum` | Live 2.4 GHz spectrum meter; hops channels with the WiFi sniffer and shows per-channel frame counts, type split, peak RSSI and unique AP counts. RX only. Try `menu spectrum` |
 | `neofetch` | System summary: OS, uptime, CPU and temperature, heap/PSRAM, flash/SD usage, battery, network. Also in the Alt+D launcher. |
 | `ssh` | SSH Client; connect to a remote ssh server |
@@ -232,7 +234,9 @@ You can execute the following commands from the built-in shell:
 | `vi` | Opens the vi port (based on [neatvi](https://github.com/aligrudi/neatvi)). Includes 5 configurable themes, check `.virc` |
 | `vnc` | VNC client: `vnc <host>[:display] [password]` shows a remote desktop on the display, with the trackball as mouse, the touch screen to tap (click) and swipe (scroll), and the keyboard as keys. Alt+M switches trackball mode (mouse / right-click / scroll / arrow keys); the Mic key is voice typing through AssemblyAI (`agent set assemblyai_key ...` first); a long click quits. VNC-password or no authentication only. See [docs/VNC.md](docs/VNC.md) |
 | `ball` | Trackball sensitivity: `ball` shows it, `ball move 1` makes the shell react to a single pulse (1-8, default 2), `ball gain 8` speeds up the `vnc` pointer (1-16, default 4), `ball reset` restores defaults. Saved in `/flash/.trackball`, applied at once |
-| `vncd` | Launches a VNC Server. Known compatible with TigerVNC. Terribly slow. |
+| `vncd` | Launches a VNC server. Full-screen mode (pixel apps, mouse as touch, Ctrl keys) when the firmware has the display shadow buffer, else terminal only. Known compatible with TigerVNC. See [docs/VNC.md](docs/VNC.md). |
+| `settings` | Encrypted backup/restore of all settings and secrets (`settings export` / `import`), plus start/stop of `httpd` and `vncd`. Also the **Settings** button in the touch Quick Settings panel. See [docs/BACKUP.md](docs/BACKUP.md). |
+| `httpd` | HTTP file server for `/flash` and `/sd`: browse, upload, download, delete from a browser or `curl`. See [docs/HTTPD.md](docs/HTTPD.md). |
 | `webvncd` | Launches a web "VNC"-like server. Faster than `vncd` |
 | `wardrive` | GPS-tagged WiFi scan logger (WiGLE CSV + KML); T-Deck Plus only (GPS lives on GPIO 43/44) |
 | `wiki` | Offline Simple English Wikipedia reader; ~170MB from SD. See `utils/wikiconvert.py` |
@@ -241,6 +245,8 @@ You can execute the following commands from the built-in shell:
 To get out of the shell, type `exit`. This will bring you to the MicroPython shell, where you can type in python expressions. To get back to the built-in shell, type `sh` in the MicroPython shell.
 
 ### Meshtastic chat (`meshchat`)
+
+**Radar:** Menu > Radar (or `/radar`) shows your node in the middle and every node that has shared a position at its real bearing and distance, with a sweep line, range rings, auto or manual range (up/down) and left/right to pick a node (Enter opens its details). It needs your own position (Settings > Position, or the Plus's GPS); nodes without a position are counted, not guessed at.
 
 `meshchat` makes the T-Deck a Meshtastic node and client in one: encrypted channels, direct messages with delivery marks, relaying for the mesh, a node list, and a settings screen. Details, limits and the bring-up checklist are in [docs/MESHTASTIC.md](docs/MESHTASTIC.md). It is tested on the device (radio, transmit, retuning) but has not yet been confirmed receiving a real Meshtastic packet.
 

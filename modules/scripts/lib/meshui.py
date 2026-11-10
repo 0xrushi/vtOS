@@ -23,6 +23,7 @@ import time
 from meshdraw import (BG, BG_BAR, BG_TAB, BG_SEL, RULE, FG, DIM, ACCENT, GREEN, YELLOW, RED,
                       SENDER_COLORS, S, seg_len, clip, paint, sanitize, wrap, age_str,
                       clock_ok, stamp, name_color, snr_color, hops_str, ljust, rjust)
+import meshradar
 import meshset
 
 MAX_INPUT = 200   # Meshtastic text payloads top out around 228 bytes
@@ -30,9 +31,9 @@ MAX_MSGS = 100    # per conversation, RAM only
 GROUP_GAP = 300   # seconds of silence before a sender header repeats
 NOTICE_SECS = 4
 
-COMMANDS = ("nodes", "chats", "ch", "dm", "node", "trace", "pos", "announce", "fav",
+COMMANDS = ("nodes", "radar", "chats", "ch", "dm", "node", "trace", "pos", "announce", "fav",
             "settings", "channels", "info", "stats", "clear", "help", "quit")
-MENU_ITEMS = ("Nodes", "Chats", "Channels", "Settings", "Info", "Stats", "Help", "Quit")
+MENU_ITEMS = ("Nodes", "Radar", "Chats", "Channels", "Settings", "Info", "Stats", "Help", "Quit")
 
 HELP_LINES = (
     ("Enter", "send"),
@@ -41,6 +42,7 @@ HELP_LINES = (
     ("Click", "menu / back"),
     ("Hold click", "quit"),
     ("/nodes", "who is on the mesh"),
+    ("/radar", "nodes around you"),
     ("/chats", "all conversations"),
     ("/ch N", "go to chat N"),
     ("/dm name", "direct message"),
@@ -144,7 +146,7 @@ class Node:
 
 # --- application -------------------------------------------------------------
 
-class App(meshset.SettingsMixin):
+class App(meshset.SettingsMixin, meshradar.RadarMixin):
     def __init__(self, backend, now=None):
         self.backend = backend
         self.convs = {}
@@ -162,6 +164,7 @@ class App(meshset.SettingsMixin):
         self._info_at = None
         self.page_back = None
         self.set_init()
+        self.radar_init()
         for key, title in backend.channels():
             self._add_conv(key, title, "ch")
         self.cur = self.order[0] if self.order else None
@@ -273,6 +276,8 @@ class App(meshset.SettingsMixin):
             return self.key_chlist(k, now)
         if self.mode == "node":
             return self.key_node(k, now)
+        if self.mode == "radar":
+            return self.key_radar(k, now)
         return self._key_chat(k, now)
 
     def _key_chat(self, k, now):
@@ -336,6 +341,8 @@ class App(meshset.SettingsMixin):
             return "quit"
         if cmd == "nodes":
             self._open_list("nodes")
+        elif cmd == "radar":
+            self.radar_open()
         elif cmd == "chats":
             self._open_list("chats")
         elif cmd == "info":
@@ -458,6 +465,8 @@ class App(meshset.SettingsMixin):
                 return "quit"
             if item == "Nodes":
                 self._open_list("nodes")
+            elif item == "Radar":
+                self.radar_open()
             elif item == "Chats":
                 self._open_list("chats")
             elif item == "Channels":
@@ -526,6 +535,8 @@ class App(meshset.SettingsMixin):
             self.render_chlist(out, cols, rows)
         elif self.mode == "node":
             self.render_node(out, cols, rows, now)
+        elif self.mode == "radar":
+            self.render_radar(out, cols, rows, now)
         else:
             self._render_chat(out, cols, rows, now, wall)
             if self.mode == "menu":

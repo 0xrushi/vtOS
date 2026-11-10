@@ -4,7 +4,7 @@
     python3 utils/mesh_preview.py              # chat screen at 40x16, 53x19, 64x29
     python3 utils/mesh_preview.py nodes 40x16  # one screen at one size
 
-Screens: chat, scrolled, menu, nodes, node, chats, channels, channel, keydialog,
+Screens: chat, scrolled, menu, nodes, node, radar, chats, channels, channel, keydialog,
 settings, radio, device, position, advanced, prompt, share, stats, info, help.
 """
 
@@ -73,21 +73,22 @@ D, U, E = "DOWN", "UP", "\r"
 MENU = ["ESC"]
 SCRIPTS = {
     "nodes": MENU + [E],
-    "chats": MENU + [D, E],
-    "channels": MENU + [D, D, E],
-    "settings": MENU + [D, D, D, E],
-    "radio": MENU + [D, D, D, E, E],
-    "device": MENU + [D, D, D, E, D, D, E],
-    "position": MENU + [D, D, D, E, D, D, D, E],
-    "advanced": MENU + [D, D, D, E, D, D, D, D, D, E],
-    "channel": MENU + [D, D, E, E],
-    "keydialog": MENU + [D, D, E, E, D, E],
-    "prompt": MENU + [D, D, D, E, D, D, E, E],
+    "radar": MENU + [D, E],
+    "chats": MENU + [D, D, E],
+    "channels": MENU + [D, D, D, E],
+    "settings": MENU + [D, D, D, D, E],
+    "radio": MENU + [D, D, D, D, E, E],
+    "device": MENU + [D, D, D, D, E, D, D, E],
+    "position": MENU + [D, D, D, D, E, D, D, D, E],
+    "advanced": MENU + [D, D, D, D, E, D, D, D, D, D, E],
+    "channel": MENU + [D, D, D, E, E],
+    "keydialog": MENU + [D, D, D, E, E, D, E],
+    "prompt": MENU + [D, D, D, D, E, D, D, E, E],
     "node": MENU + [E, "i"],
-    "stats": MENU + [D, D, D, D, D, E],
-    "info": MENU + [D, D, D, D, E],
-    "help": MENU + [D, D, D, D, D, D, E],
-    "share": MENU + [D, D, E, "s"],
+    "stats": MENU + [D, D, D, D, D, D, E],
+    "info": MENU + [D, D, D, D, D, E],
+    "help": MENU + [D, D, D, D, D, D, D, E],
+    "share": MENU + [D, D, D, E, "s"],
 }
 
 

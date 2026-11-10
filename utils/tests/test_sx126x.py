@@ -262,3 +262,28 @@ def test_works_with_the_meshtastic_stack(radio):
     cfg = mtconfig.Settings()
     ok, msg, limited = meshback.configure_radio(r, cfg)
     assert ok and limited == "" and cfg.tcxo_found == 0.0
+
+
+def test_sweep_reads_power_per_frequency_and_calibrates_the_image_once(radio):
+    r, chip, env = radio
+    begin_meshtastic(r, freq=868.0, bw=125.0, sf=7)
+    chip.log.clear()
+    freqs = [867.0 + 0.125 * i for i in range(40)]            # crosses two chunks of 16
+    levels = r.sweep(freqs, settle_us=0)
+    assert levels == [-101.0] * 40                            # FakeChip answers 2 * 101
+    sets = chip.cmds(sx126x.CMD_SET_RF_FREQ)
+    assert sets[0] == int(867.0 * (1 << 25) / 32.0).to_bytes(4, "big")
+    assert sets[-1] == int(871.875 * (1 << 25) / 32.0).to_bytes(4, "big")
+    assert len(sets) == 40
+    assert len(chip.cmds(sx126x.CMD_SET_RX)) == 40
+    assert chip.cmds(sx126x.CMD_CALIBRATE_IMAGE) == []         # same band as begin(): no recalibration
+    assert not env.sd_busy and chip.baud == 80000000           # bus handed back to the display
+    assert chip.cmds(sx126x.CMD_SET_STANDBY)[-1] == b"\x00"
+
+
+def test_sweep_recalibrates_when_the_band_changes(radio):
+    r, chip, _ = radio
+    begin_meshtastic(r, freq=868.0)
+    chip.log.clear()
+    r.sweep([868.0, 915.0, 915.5, 433.9], settle_us=0)
+    assert chip.cmds(sx126x.CMD_CALIBRATE_IMAGE) == [bytes([0xE1, 0xE9]), bytes([0x6B, 0x6F])]

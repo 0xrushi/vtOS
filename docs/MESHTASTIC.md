@@ -37,6 +37,12 @@ slash commands (`/nodes /dm /node /trace /pos /announce /fav /settings
 - **Relaying**: managed flooding with a hop limit, duplicate suppression, and
   SNR-weighted back-off (strong signals wait longer so distant nodes relay
   first). Roles Router/Repeater relay with priority, Client Mute never relays.
+- **Radar** (Menu > Radar, `/radar`): your node in the centre, nodes that shared a position placed
+  at their real bearing and distance (taller-than-wide cells are corrected for), rings at 1/3, 2/3 and
+  full range, a sweep line, `N` at the top. Range is automatic (nearest preset that holds the farthest
+  node) or set with up/down, `a` returns to auto. Left/right pick a node, Enter opens its details and
+  Esc returns to the radar. Needs your own position; nodes without one are counted in the footer.
+  Host-tested only, not run on the device.
 - **Node database**: names, role, hops, SNR, battery/voltage, uptime, position,
   distance and bearing from you, favourites, ignore. Saved across runs.
 - **Announcements**: node info, position (GPS on the Plus, or a fixed position,

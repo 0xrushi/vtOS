@@ -24,6 +24,7 @@ try:
     _ticks = time.ticks_ms
     _diff = time.ticks_diff
     _sleep_ms = time.sleep_ms
+    _sleep_us = time.sleep_us
 except AttributeError:                      # host tests
     def _ticks():
         return int(time.time() * 1000)
@@ -33,6 +34,9 @@ except AttributeError:                      # host tests
 
     def _sleep_ms(ms):
         time.sleep(ms / 1000.0)
+
+    def _sleep_us(us):
+        time.sleep(us / 1e6)
 
 # opcodes
 CMD_SET_SLEEP = 0x84
@@ -109,6 +113,7 @@ class SX126x:
         self._sf = 7
         self._preamble = 8
         self._cr = 5
+        self._img = None
         self.alive = True
 
     # -- bus handling --
@@ -177,6 +182,7 @@ class SX126x:
             self._unlock()
 
     def _reset(self):
+        self._img = None
         self.rst.value(0)
         _sleep_ms(10)
         self.rst.value(1)
@@ -240,7 +246,11 @@ class SX126x:
             img = (0xD7, 0xDB)
         else:
             img = (0xE1, 0xE9)
-        self._write(CMD_CALIBRATE_IMAGE, bytes(img))
+        # Image calibration is slow, so it is redone only when the band changes
+        # (a chip reset clears the cache): a spectrum sweep retunes hundreds of times.
+        if img != self._img:
+            self._write(CMD_CALIBRATE_IMAGE, bytes(img))
+            self._img = img
         frf = int(mhz * (1 << 25) / 32.0)
         self._write(CMD_SET_RF_FREQ, frf.to_bytes(4, "big"))
 
@@ -374,6 +384,33 @@ class SX126x:
     def rssi_inst(self):
         """Current channel power in dBm (valid while receiving)."""
         return -self._read(CMD_GET_RSSI_INST, 1)[0] / 2.0
+
+    def sweep(self, freqs, settle_us=600, chunk=16):
+        """Channel power in dBm at each frequency in `freqs` (MHz). Receive only.
+
+        The channel width is the bandwidth given to begin(), so that is the
+        resolution bandwidth. The bus is held for `chunk` points at a time and
+        released in between so the display keeps updating. The radio is left in
+        standby; start_receive() resumes normal listening.
+        """
+        out = []
+        n = len(freqs)
+        i = 0
+        while i < n:
+            self._lock()
+            try:
+                for f in freqs[i:i + chunk]:
+                    self._write(CMD_SET_STANDBY, b"\x00")
+                    self._set_frequency(f)
+                    self._write(CMD_SET_RX, b"\xFF\xFF\xFF")
+                    _sleep_us(settle_us)
+                    out.append(-self._read(CMD_GET_RSSI_INST, 1)[0] / 2.0)
+            finally:
+                self._unlock()
+            i += chunk
+        self._write(CMD_SET_STANDBY, b"\x00")
+        self._mode = "standby"
+        return out
 
     def snr(self):
         return self._snr

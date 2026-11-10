@@ -24,7 +24,10 @@ MAX_WIDTH = 34
 TOGGLE_KEY = "\x1d"
 
 DESCRIPTIONS = {
+    "settings": "backup/restore, web + remote",
+    "httpd": "http file upload/download",
     "agent": "chat agent (openai api)",
+    "balatro": "mini poker roguelike",
     "blechat": "bluetooth mesh chat",
     "blescan": "ble device scan",
     "c2": "command & control",
@@ -62,6 +65,7 @@ DESCRIPTIONS = {
     "sshd": "ssh server",
     "sniff": "802.11 pcap sniffer",
     "spectrum": "2.4ghz spectrum",
+    "rfspec": "sub-ghz lora spectrum",
     "stream": "internet radio",
     "wardrive": "gps wifi logger",
     "telnet": "telnet client",
@@ -218,7 +222,7 @@ def _read_key(timeout_ms=40):
     if sys.stdin.read(1) != "[":
         return "ESC"
     seq = sys.stdin.read(1)
-    return {"A": "UP", "B": "DOWN", "C": "RIGHT", "D": "LEFT"}.get(seq, "")
+    return {"A": "UP", "B": "DOWN", "C": "RIGHT", "D": "LEFT"}.get(seq, "UNKNOWN")
 
 
 def pick(env, entries, label="run"):

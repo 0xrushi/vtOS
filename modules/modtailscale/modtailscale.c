@@ -219,6 +219,25 @@ static mp_obj_t ts_configure(mp_obj_t key_obj, mp_obj_t name_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(ts_configure_obj, ts_configure);
 
+static mp_obj_t ts_get_config(void) {
+    // Read the saved auth key and hostname back (used by settings backups).
+    char key[sizeof(auth_key)], name[sizeof(hostname)];
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(TS_NVS, NVS_READONLY, &nvs);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return mp_const_none;
+    check_error(err);
+    size_t size = sizeof(key);
+    err = nvs_get_str(nvs, "auth_key", key, &size);
+    size = sizeof(name);
+    if (err == ESP_OK) err = nvs_get_str(nvs, "hostname", name, &size);
+    nvs_close(nvs);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return mp_const_none;
+    check_error(err);
+    mp_obj_t pair[] = {mp_obj_new_str(key, strlen(key)), mp_obj_new_str(name, strlen(name))};
+    return mp_obj_new_tuple(2, pair);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(ts_get_config_obj, ts_get_config);
+
 static mp_obj_t ts_up(void) {
     lock();
     if (vpn) {
@@ -399,6 +418,7 @@ static MP_DEFINE_CONST_FUN_OBJ_2(ts_wait_peer_obj, ts_wait_peer);
 static const mp_rom_map_elem_t globals_table[] = {
     {MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_modtailscale)},
     {MP_ROM_QSTR(MP_QSTR_configure), MP_ROM_PTR(&ts_configure_obj)},
+    {MP_ROM_QSTR(MP_QSTR_get_config), MP_ROM_PTR(&ts_get_config_obj)},
     {MP_ROM_QSTR(MP_QSTR_up), MP_ROM_PTR(&ts_up_obj)},
     {MP_ROM_QSTR(MP_QSTR_down), MP_ROM_PTR(&ts_down_obj)},
     {MP_ROM_QSTR(MP_QSTR_status), MP_ROM_PTR(&ts_status_obj)},

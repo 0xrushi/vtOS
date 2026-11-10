@@ -41,13 +41,19 @@ class TerminalOverlay(io.IOBase):
             getattr(self.terminal, name)(data)
 
     def restore(self):
-        self.terminal.top_offset(self.panel.env.status_height)  # dirty all rows
+        env = self.panel.env
+        app_display = getattr(env, "app_display", None)
+        if app_display is None:
+            self.terminal.top_offset(env.status_height)  # dirty all rows
+        else:
+            app_display.dirty = True
         self.terminal.top_bar_invalidate()
         self.terminal.bottom_bar_invalidate()
         for name, data in self.bars.items():
             getattr(self.terminal, name)(data)
         self.bars.clear()
-        self.terminal.draw()
+        if app_display is None:
+            self.terminal.draw()
         self.terminal.repaint_bars()
 
 
@@ -138,6 +144,11 @@ class QuickPanel:
     def tap(self, x, y):
         if x >= 276 and y < 38 or y >= 224:
             self.close()
+            return
+        if 150 <= x < 270 and y < 38:
+            # Settings button: close the panel and type the command at the shell.
+            self.close()
+            self.env.kvm.inject("settings\r")
             return
         if 190 <= y < 211 and self.notifications:
             self.notice_index = (self.notice_index - 1) % len(self.notifications)
@@ -292,6 +303,7 @@ class QuickPanel:
         d = self.display
         d.fill_rect(0, 0, 320, 240, self.BG)
         self.text("Quick settings", 14, 12)
+        self.text("[ Settings ]", 160, 12, self.ACCENT)
         self.text("X", 292, 12, self.DIM)
         states = (self.wlan.active(), self.ble.active(),
                   getattr(self.env, "gps", None) is not None,

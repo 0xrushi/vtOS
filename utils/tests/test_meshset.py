@@ -56,7 +56,7 @@ def screen(app, clock, cols=40, rows=16):
 
 
 def open_settings(app, clock):
-    keys(app, clock, "ESC", D, D, D, E)       # menu > Settings
+    keys(app, clock, "ESC", D, D, D, D, E)       # menu > Settings
     assert app.mode == "settings"
 
 
@@ -180,7 +180,7 @@ def test_reset_to_defaults_needs_confirmation(rig):
 
 def test_channel_list_add_delete_and_primary_protected(rig):
     app, backend, clock = rig
-    keys(app, clock, "ESC", D, D, E)              # Channels
+    keys(app, clock, "ESC", D, D, D, E)              # Channels
     assert app.mode == "chlist"
     text = "\n".join(screen(app, clock))
     assert "LongFast" in text and "default" in text and "AES128" in text
@@ -195,7 +195,7 @@ def test_channel_list_add_delete_and_primary_protected(rig):
 
 def test_channel_key_choices(rig):
     app, backend, clock = rig
-    keys(app, clock, "ESC", D, D, E, D, E)        # Channels > Hike > form
+    keys(app, clock, "ESC", D, D, D, E, D, E)        # Channels > Hike > form
     assert app.form_kind == "channel"
     keys(app, clock, D, E)                        # key dialog
     keys(app, clock, D, D, D, E)                  # new random 256-bit
@@ -225,7 +225,7 @@ def test_parse_key_accepts_hex_base64_and_keywords():
 
 def test_share_and_import_round_trip(rig):
     app, backend, clock = rig
-    keys(app, clock, "ESC", D, D, E, "s")
+    keys(app, clock, "ESC", D, D, D, E, "s")
     assert app.mode == "page" and app.page[0] == "Share"
     url = backend.config.share_url()
     flat = "".join(ln[0][2] for ln in app.page[1] if ln[0][2].startswith(("https", "AAEC")) or True)
@@ -249,7 +249,7 @@ def test_share_and_import_round_trip(rig):
 
 def test_import_rejects_garbage(rig):
     app, backend, clock = rig
-    keys(app, clock, "ESC", D, D, E, "i")
+    keys(app, clock, "ESC", D, D, D, E, "i")
     typed(app, clock, "https://example.com/not-a-link")
     keys(app, clock, E)
     assert app.dialog is None and "valid channel link" in screen(app, clock)[15]
@@ -257,7 +257,7 @@ def test_import_rejects_garbage(rig):
 
 def test_apply_resyncs_chat_tabs_with_new_channels(rig):
     app, backend, clock = rig
-    keys(app, clock, "ESC", D, D, E, "a")
+    keys(app, clock, "ESC", D, D, D, E, "a")
     keys(app, clock, "ESC", "ESC")                # back to chat? settings list first
     assert app.mode == "settings"
     keys(app, clock, D, D, D, D, D, D, E)         # Apply changes
@@ -537,7 +537,7 @@ def test_ui_drives_real_backend_end_to_end(tmp_path):
     app.poll(clock.t)
     assert "ping sent" in "\n".join(screen(app, clock))
     # bring up settings against the real backend
-    keys(app, clock, "ESC", D, D, D, E)
+    keys(app, clock, "ESC", D, D, D, D, E)
     assert app.mode == "settings"
     assert "US  LongFast  slot 20" in "\n".join(screen(app, clock))
 

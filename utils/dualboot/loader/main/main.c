@@ -54,7 +54,7 @@
 
 #define NUM_SLOTS 3
 
-static const char *const SLOT_NAMES[NUM_SLOTS] = {"vtOS", "iq lab", "agent"};
+static const char *const SLOT_NAMES[NUM_SLOTS] = {"vtOS", "iq lab", "wadamesh"};
 static const esp_partition_subtype_t SLOT_SUBTYPES[NUM_SLOTS] = {
     ESP_PARTITION_SUBTYPE_APP_OTA_0,
     ESP_PARTITION_SUBTYPE_APP_OTA_1,
@@ -184,7 +184,7 @@ void app_main(void)
     display_fill(COLOR_BLACK);
     draw_menu(target, 0);
 
-    printf("\r\ndualboot: [1]vtOS [2]iq lab [3]agent -- BOOT to switch, booting in %d ms\r\n",
+    printf("\r\ndualboot: [1]vtOS [2]iq lab [3]wadamesh -- BOOT to switch, booting in %d ms\r\n",
            WINDOW_MS);
 
     int64_t t0 = esp_timer_get_time();

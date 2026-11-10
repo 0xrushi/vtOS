@@ -48,17 +48,19 @@ import quickpanel
 quickpanel.install(env, tft)
 
 import clipd
+import httpd
 
 # The FAST loop (30ms)
 def scheduled_fast(_):
     trackball.poll(env)
     clipd.tick(env)
+    httpd.tick(env)
     if env.quickpanel is not None:
         env.quickpanel.poll()
 
-    # Skip this tick's redraw rather than racing an in-flight SD transfer
-    # that has the shared SPI bus temporarily parked at SD_BAUDRATE.
-    if not env.sd_busy:
+    # SD transfers park the shared SPI bus at SD_BAUDRATE. Pixel apps
+    # draw the area below the status bar themselves.
+    if not env.sd_busy and env.app_display is None:
         env.term.draw()
 
 def fast_loop(_):
@@ -125,6 +127,13 @@ wificonfig.start_at_boot()
 try:
     if clipd.load_config()["autostart"]:
         clipd.start(env)
+except Exception:
+    pass
+
+# HTTP file server (httpd): same lazy bind as clipd.
+try:
+    if httpd.load_config()["autostart"]:
+        httpd.start(env)
 except Exception:
     pass
 

@@ -30,6 +30,7 @@ import meshui
 STATE_FILE = "/flash/.meshchat.json"
 DRAW_INTERVAL_MS = 50   # back-to-back redraws once tripped the watchdog (see irc.py)
 TICK_MS = 1000          # relative times and notices expire on this beat
+ANIM_MS = 250           # faster beat while the radar sweep is on screen
 
 
 def _read_key(timeout_ms=40):
@@ -95,17 +96,39 @@ def main(env, args):
     drawn_at = -DRAW_INTERVAL_MS
     ticked_at = time.ticks_ms()
     dirty = True
+    radar = None
+    radar_pixels = getattr(env, "tft", None) is not None and hasattr(env, "app_display")
     try:
         while True:
             now = time.time()
             if app.poll(now):
                 dirty = True
-            if time.ticks_diff(time.ticks_ms(), ticked_at) >= TICK_MS:
+            radar_mode = app.animating()
+            if time.ticks_diff(time.ticks_ms(), ticked_at) >= (ANIM_MS if radar_mode else TICK_MS):
                 ticked_at = time.ticks_ms()
                 dirty = True
 
+            if radar is not None and not radar_mode:
+                restore_terminal(env)
+                radar = None
+                dirty = True
+            elif radar_mode and radar_pixels and radar is None:
+                try:
+                    from pixelui import restore_terminal
+                    from radarscreen import Screen
+                    radar = Screen(env)
+                    env.app_display = radar
+                    dirty = True
+                except (ImportError, MemoryError):
+                    radar_pixels = False
+
+            if radar is not None and radar.dirty:
+                dirty = True
             if dirty and time.ticks_diff(time.ticks_ms(), drawn_at) >= DRAW_INTERVAL_MS:
-                out.write(app.render(env.cols, env.rows, now))
+                if radar is None:
+                    out.write(app.render(env.cols, env.rows, now))
+                else:
+                    radar.draw(app, now)
                 drawn_at = time.ticks_ms()
                 dirty = False
 
@@ -121,6 +144,8 @@ def main(env, args):
     except KeyboardInterrupt:
         pass
     finally:
+        if radar is not None:
+            restore_terminal(env)
         state["last"] = app.cur
         _save_state(state)
         backend.close()
