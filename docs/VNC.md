@@ -81,8 +81,8 @@ It waits (up to 30 s) for the tunnel to that machine, then connects through it.
 Only numeric addresses work, not MagicDNS names, and the server must accept
 connections on its tailnet address (Docker's published ports do). If the tunnel
 is not up, `vnc` says to run `tailscale up`. This needs a firmware with
-`modtailscale.wait_peer` (added with this feature). **Status: the first attempt on a
-T-Deck failed to connect and the cause is not yet known; treat this as unverified.**
+`modtailscale.wait_peer` (added with this feature). **Status: works on a T-Deck
+(confirmed by hand after joining the tailnet); speed over the tunnel is not measured.**
 
 ## Trying it without a real server
 
