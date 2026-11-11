@@ -2,7 +2,7 @@
 # MicroPython Meshtastic chat TUI
 # License: MIT
 #
-# Usage: meshchat [name] [--demo] [--raw]
+# Usage: meshchat [name] [--demo] [--raw] [--meshcore]
 #
 # A real Meshtastic node on the SX1262: encrypted channels, direct messages,
 # acks, relaying, node list, position and telemetry, plus a settings TUI for
@@ -11,6 +11,7 @@
 # first use.
 #
 # --raw   speak lorachat's plain "nick: text" LoRa format instead
+# --meshcore  MeshCore client instead of Meshtastic (contacts, repeater login; /help)
 # --demo  a scripted fake mesh (also the fallback when the radio can't start)
 #
 # Trackball: left/right switch chats, up/down scroll, click opens the menu
@@ -78,7 +79,8 @@ def main(env, args):
     nick = (names[0] if names else state.get("nick") or _default_nick())[:16]
     state["nick"] = nick
 
-    backend, note = meshback.open_backend(env, "--demo" in args, nick, "--raw" in args)
+    backend, note = meshback.open_backend(env, "--demo" in args, nick, "--raw" in args,
+                                          "--meshcore" in args)
     # The quick panel refuses to switch LoRa off while an app owns the radio;
     # shell._app restores the previous value when we return.
     env.app_uses_radio = not backend.demo

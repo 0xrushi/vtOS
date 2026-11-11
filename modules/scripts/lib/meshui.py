@@ -25,8 +25,10 @@ from meshdraw import (BG, BG_BAR, BG_TAB, BG_SEL, RULE, FG, DIM, ACCENT, GREEN, 
                       clock_ok, stamp, name_color, snr_color, hops_str, ljust, rjust)
 import meshradar
 import meshset
+import meshcontacts
 
 MAX_INPUT = 200   # Meshtastic text payloads top out around 228 bytes
+MAX_LINK = 480    # /import <meshcore:// link> is longer than a message
 MAX_MSGS = 100    # per conversation, RAM only
 GROUP_GAP = 300   # seconds of silence before a sender header repeats
 NOTICE_SECS = 4
@@ -34,6 +36,9 @@ NOTICE_SECS = 4
 COMMANDS = ("nodes", "radar", "chats", "ch", "dm", "node", "trace", "pos", "announce", "fav",
             "settings", "channels", "info", "stats", "clear", "help", "quit")
 MENU_ITEMS = ("Nodes", "Radar", "Chats", "Channels", "Settings", "Info", "Stats", "Help", "Quit")
+# Extra commands and menu entries when the backend is MeshCore (backend.meshcore).
+MC_COMMANDS = ("import", "login", "id", "radio", "heard", "forget")
+MC_MENU = ("Import contact",)
 
 HELP_LINES = (
     ("Enter", "send"),
@@ -41,7 +46,9 @@ HELP_LINES = (
     ("Up/Down", "scroll"),
     ("Click", "menu / back"),
     ("Hold click", "quit"),
-    ("/nodes", "who is on the mesh"),
+    ("/nodes", "who is on the mesh; c saves a contact"),
+    ("/contacts", "saved contacts; a adds one"),
+    ("/contact", "add current DM or a new contact"),
     ("/radar", "nodes around you"),
     ("/chats", "all conversations"),
     ("/ch N", "go to chat N"),
@@ -57,6 +64,14 @@ HELP_LINES = (
     ("/info", "this node"),
     ("/clear", "clear this chat"),
     ("/quit", "leave"),
+)
+MC_HELP = (
+    ("/import x", "add contact: meshcore:// link, key or heard name"),
+    ("/login", "log in to the repeater in this chat"),
+    ("/heard", "adverts heard, not added yet"),
+    ("/id", "your MeshCore name, key and link"),
+    ("/radio ...", "freq bw sf cr [power]; must match repeater"),
+    ("/forget x", "remove contact"),
 )
 
 
@@ -146,8 +161,8 @@ class Node:
 
 # --- application -------------------------------------------------------------
 
-class App(meshset.SettingsMixin, meshradar.RadarMixin):
-    def __init__(self, backend, now=None):
+class App(meshset.SettingsMixin, meshradar.RadarMixin, meshcontacts.ContactsMixin):
+    def __init__(self, backend, now=None, contacts_path=None):
         self.backend = backend
         self.convs = {}
         self.order = []
@@ -165,6 +180,7 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
         self.page_back = None
         self.set_init()
         self.radar_init()
+        self.contacts_init(contacts_path)
         for key, title in backend.channels():
             self._add_conv(key, title, "ch")
         self.cur = self.order[0] if self.order else None
@@ -190,13 +206,24 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
     def conv(self):
         return self.convs[self.cur]
 
+    def max_input(self):
+        return MAX_LINK if self.input.startswith("/import ") else MAX_INPUT
+
+    def is_mc(self):
+        return bool(getattr(self.backend, "meshcore", False))
+
     def commands(self):
-        return COMMANDS + ("discover",) if hasattr(self.backend, "discover") else COMMANDS
+        cmds = COMMANDS + ("contacts", "contact")
+        if self.is_mc():
+            cmds += MC_COMMANDS
+        return cmds + ("discover",) if hasattr(self.backend, "discover") else cmds
 
     def menu_items(self):
-        items = MENU_ITEMS
+        items = MENU_ITEMS[:-1] + ("Contacts",) + MENU_ITEMS[-1:]
         if hasattr(self.backend, "discover"):
             items = items[:-1] + ("Discover nodes",) + items[-1:]
+        if self.is_mc():
+            items = items[:-1] + MC_MENU + items[-1:]
         return items
 
     def notify(self, text, color=DIM, now=None):
@@ -252,6 +279,7 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
 
     def _on_msg(self, ev):
         key, nid, name, text, ts = ev[1:6]
+        name = self.contact_alias(nid, name)
         meta = ev[6] if len(ev) > 6 else ""
         title = name if key.startswith("dm:") else key
         conv = self._add_conv(key, title, "dm" if key.startswith("dm:") else "ch")
@@ -271,6 +299,10 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             return self.key_prompt(k, now)
         if self.dialog:
             return self.key_dialog(k, now)
+        if self.mode == "contacts":
+            return self.key_contacts(k, now)
+        if self.mode == "contact":
+            return self.key_contact(k, now)
         if self.mode == "menu":
             return self._key_menu(k, now)
         if self.mode in ("nodes", "chats"):
@@ -284,6 +316,8 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
         if self.mode == "chlist":
             return self.key_chlist(k, now)
         if self.mode == "node":
+            if k == "c":
+                return self.contact_open(node=self.node_view)
             return self.key_node(k, now)
         if self.mode == "radar":
             return self.key_radar(k, now)
@@ -308,7 +342,7 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             return self._submit(now)
         elif k in ("\x08", "\x7f"):
             self.input = self.input[:-1]
-        elif len(k) == 1 and 32 <= ord(k) <= 126 and len(self.input) < MAX_INPUT:
+        elif len(k) == 1 and 32 <= ord(k) <= 126 and len(self.input) < self.max_input():
             self.input += k
         return None
 
@@ -350,6 +384,20 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             return "quit"
         if cmd == "nodes":
             self._open_list("nodes")
+        elif cmd == "contacts":
+            self.contacts_open(now)
+        elif cmd == "contact":
+            node = self.find_node(arg) if arg else None
+            if node:
+                self.contact_open(node=node)
+            elif arg:
+                self.notify("No node found; use /contacts to add", YELLOW, now)
+            elif self.cur.startswith("dm:"):
+                self.contact_open({"protocol": meshcontacts.protocol(self.backend),
+                                   "nid": self.cur[3:], "name": self.conv().title,
+                                   "email": "", "note": ""})
+            else:
+                self.contact_open()
         elif cmd == "discover":
             self.discover(now)
         elif cmd == "radar":
@@ -376,6 +424,14 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             if not arg:
                 self._open_list("nodes")
             else:
+                matches = [r for r in self.contact_rows() if
+                           r["name"].lower() == arg.lower() or r["nid"].lower() == arg.lower()]
+                if matches:
+                    if len(matches) == 1:
+                        self.contact_message(matches[0], now)
+                    else:
+                        self.notify("Several contacts match; use /contacts", YELLOW, now)
+                    return None
                 node = self.find_node(arg)
                 if node is None:
                     self.notify("No node '%s'" % arg[:16], RED, now)
@@ -405,6 +461,8 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             self.set_open(now, "chlist")
         elif cmd == "stats":
             self._open_page("stats", now)
+        elif self.is_mc() and cmd in MC_COMMANDS:
+            self.mc_command(cmd, arg, now)
         else:
             self.notify("Unknown command: /%s" % cmd[:16], RED, now)
         return None
@@ -418,6 +476,96 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
         self._open_list("nodes")
         self.notify(msg, GREEN if ok else YELLOW, now)
 
+    # -- MeshCore controls (only reachable when backend.meshcore) --
+
+    def mc_command(self, cmd, arg, now):
+        b = self.backend
+        if cmd == "import":
+            self.mc_import(arg, now)
+        elif cmd == "login":
+            node = self.mc_current_contact()
+            if node is None:
+                self.notify("Open a repeater chat first (/dm name)", RED, now)
+            else:
+                self.mc_login(node, now, arg)
+        elif cmd == "id":
+            info = b.identity()
+            self.page = ("My MeshCore identity", [
+                [S(DIM, "%-6s" % "Name"), S(FG, info["name"])],
+                [S(DIM, "%-6s" % "Key"), S(FG, info["pub"][:32])],
+                [S(DIM, "%-6s" % ""), S(FG, info["pub"][32:])],
+                [S(FG, "")],
+                [S(DIM, "Share link (add it in the app or with /import):")],
+            ] + [[S(FG, ln)] for ln in wrap(info["link"], 38)])
+            self.page_scroll = 0
+            self.mode = "page"
+        elif cmd == "heard":
+            rows = b.heard()
+            lines = [[S(FG, "%-14s %-8s %s" % (n[:14], kind, age_str(age)))]
+                     for n, kind, age, hops in rows]
+            lines = lines or [[S(DIM, "No adverts heard yet")]]
+            lines.append([S(FG, "")])
+            lines.append([S(DIM, "/import <name> adds one")])
+            self.page = ("Heard (not added)", lines)
+            self.page_scroll = 0
+            self.mode = "page"
+        elif cmd == "radio":
+            ok, msg = b.set_radio(arg)
+            self.notify(msg, GREEN if ok else RED, now)
+            self._refresh(now)
+        elif cmd == "forget":
+            node = self.find_node(arg) if arg else self.mc_current_contact()
+            if node is None:
+                self.notify("Usage: /forget name", RED, now)
+                return
+            ok, msg = b.forget(node.nid)
+            key = "dm:" + str(node.nid)
+            if ok and key in self.convs:
+                del self.convs[key]
+                self.order.remove(key)
+                if self.cur == key:
+                    self.cur = self.order[0]
+            self._refresh(now)
+            self.notify(msg, GREEN if ok else RED, now)
+
+    def mc_current_contact(self):
+        if not self.cur.startswith("dm:"):
+            return None
+        nid = self.cur[3:]
+        for n in self.nodes:
+            if str(n.nid) == nid:
+                return n
+        return None
+
+    def mc_import(self, text, now):
+        def done(value):
+            ok, msg, nid = self.backend.import_contact(value)
+            self.notify(msg, GREEN if ok else RED, now)
+            self._refresh(now)
+            if ok and nid:
+                for n in self.nodes:
+                    if n.nid == nid:
+                        self._open_dm(n)
+        if text:
+            done(text)
+        else:
+            self.ask_text("Paste contact link (Alt+V)", "", done, maxlen=400,
+                          hint="Enter add   click cancel")
+
+    def mc_login(self, node, now, password=""):
+        if not getattr(node, "needs_login", False):
+            self.notify("%s is not a repeater or room" % node.name, YELLOW, now)
+            return
+
+        def go(pw):
+            ok, msg = self.backend.login(node.nid, pw)
+            self.notify(msg, GREEN if ok else RED, now)
+        if password:
+            go(password)
+        else:
+            self.ask_text("Password for %s (empty = guest)" % node.name[:16], "", go,
+                          maxlen=15, hint="Enter login   click cancel", mask=True)
+
     def find_node(self, name):
         q = name.lower()
         for test in (lambda n: n.lower() == q,
@@ -429,7 +577,9 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
         return None
 
     def _open_dm(self, node):
-        conv = self._add_conv("dm:" + str(node.nid), node.name, "dm")
+        name = self.contact_alias(node.nid, node.name)
+        conv = self._add_conv("dm:" + str(node.nid), name, "dm")
+        conv.title = name
         self._goto_conv(conv.key)
 
     def _open_list(self, which):
@@ -442,7 +592,7 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
         if which == "help":
             extra = (("/discover", "ask nearby nodes for names"),) if hasattr(self.backend, "discover") else ()
             lines = [[S(ACCENT, "%-11s" % k, bold=True), S(FG, v)]
-                     for k, v in HELP_LINES + extra]
+                     for k, v in HELP_LINES + extra + (MC_HELP if self.is_mc() else ())]
             self.page = ("Help", lines)
             return
         if which == "stats":
@@ -486,12 +636,17 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             item = items[self.sel]
             if item == "Quit":
                 return "quit"
+            if item == "Import contact":
+                self.mode = "chat"
+                self.mc_import("", now)
             if item == "Nodes":
                 self._open_list("nodes")
             elif item == "Discover nodes":
                 self.discover(now)
             elif item == "Radar":
                 self.radar_open()
+            elif item == "Contacts":
+                self.contacts_open(now)
             elif item == "Chats":
                 self._open_list("chats")
             elif item == "Channels":
@@ -515,6 +670,8 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             self.sel = (self.sel - 1) % n
         elif k == "DOWN" and n:
             self.sel = (self.sel + 1) % n
+        elif self.mode == "nodes" and n and k == "c":
+            self.contact_open(node=items[min(self.sel, n - 1)])
         elif self.mode == "nodes" and k == "d":
             self.discover(now)
         elif k in ("\r", "\n") and n:
@@ -550,7 +707,11 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
         wall = clock_ok(now)
         out = ["\x1b[?25l"]
         out.append(paint(1, self._header(cols), BG_BAR, cols))
-        if self.mode in ("nodes", "chats"):
+        if self.mode == "contacts":
+            self.render_contacts(out, cols, rows)
+        elif self.mode == "contact":
+            self.render_contact(out, cols, rows)
+        elif self.mode in ("nodes", "chats"):
             self._render_list(out, cols, rows, now)
         elif self.mode == "page":
             self._render_page(out, cols, rows)
@@ -690,9 +851,10 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
 
     def _composer(self, row, cols):
         extra = []
-        if len(self.input) >= MAX_INPUT - 40:
-            extra = [S(YELLOW if len(self.input) < MAX_INPUT else RED,
-                       " %d " % (MAX_INPUT - len(self.input)))]
+        limit = self.max_input()
+        if len(self.input) >= limit - 40 and limit == MAX_INPUT:
+            extra = [S(YELLOW if len(self.input) < limit else RED,
+                       " %d " % (limit - len(self.input)))]
         room = max(1, cols - 4 - seg_len(extra))
         shown = self.input[-room:]
         segs = [S(ACCENT, " > ", bold=True), S(FG, shown), S(ACCENT, "_")]
@@ -703,20 +865,22 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
         items = self.menu_items()
         w = min(cols - 2, 18)
         left = (cols - w) // 2 + 1
-        top = max(1, (rows - (len(items) + 2)) // 2)
+        height = min(len(items), max(1, rows - 2))
+        first = max(0, self.sel - height + 1)
+        top = max(1, (rows - (height + 2)) // 2)
         inner = w - 2
         title = "─ Menu "
         out.append(paint(top, [S(DIM, "┌" + title + "─" * (inner - len(title)) + "┐")],
                          BG_BAR, cols, left_col=left, width=w))
-        for i, item in enumerate(items):
-            sel = i == self.sel
+        for i, item in enumerate(items[first:first + height]):
+            sel = first + i == self.sel
             body = ("> " if sel else "  ") + item
             out.append(paint(top + 1 + i,
                              [S(DIM, "│"),
                               S(ACCENT if sel else FG, " " + ljust(body, inner - 1), bold=sel),
                               S(DIM, "│")],
                              BG_BAR, cols, left_col=left, width=w))
-        out.append(paint(top + 1 + len(items),
+        out.append(paint(top + 1 + height,
                          [S(DIM, "└" + "─" * inner + "┘")],
                          BG_BAR, cols, left_col=left, width=w))
 
@@ -754,9 +918,9 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             segs = self._node_row(items[idx], sel, cols, now) if nodes \
                 else self._chat_row(self.convs[items[idx]], sel, cols)
             out.append(paint(row, segs, BG_SEL if sel else BG, cols))
-        hint = " Enter dm  i info  f fav  x ignore" if nodes else " Enter open  click back"
+        hint = " Enter dm  i info  c contact" if nodes else " Enter open  click back"
         if nodes and hasattr(self.backend, "discover"):
-            hint = " Enter dm  i info  d discover"
+            hint = " Enter dm  c contact  d discover"
         out.append(paint(rows, [S(DIM, hint)], BG, cols))
 
     def _node_row(self, n, sel, cols, now):

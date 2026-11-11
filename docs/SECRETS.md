@@ -32,6 +32,7 @@ Two stores on the device, plus the SD card.
 | HTTP file-server token | `/flash/.http.json` | `httpd new-token` | Lost = new token is generated on next start |
 | Encrypted settings backup | `/sd/backups/*.vtbk` | `settings export` | Holds every secret above (passphrase-encrypted); survives every flash because it is on the SD card. Restore with `settings import` ([details](BACKUP.md)) |
 | Meshtastic channel keys (PSKs), node name, region | `/flash/.mesh.json`, `/flash/mesh-channels.txt` | `meshchat` Settings | PSK = who can read your mesh channel |
+| MeshCore **identity private key**, contacts, channel secrets, radio settings | `/flash/.meshcore.json` | `meshcore id` / `meshchat --meshcore` (key generated on first use) | The 64-byte expanded Ed25519 private key is stored in hex, unencrypted. Anyone with it can impersonate this node to repeaters you are logged in to; lost = new identity, and repeaters/contacts must re-add your new key. Repeater passwords are typed per login and **not** stored. Included in `settings export` |
 | Mail drafts / viewed mail | `/flash/.compose.mail`, `/flash/.view.mail` | `smtp`, `pop3` | Message text; passwords for `pop3`/`smtp` are typed on the command line each time and not stored |
 
 ### Settings (not secret, but you will want them back)
@@ -41,6 +42,7 @@ Two stores on the device, plus the SD card.
 | Trackball sensitivity (`move`, `gain`) | `/flash/.trackball` | `ball move <n>`, `ball gain <n>` |
 | LoRa frequency / power | `/flash/.radio.json` | `loracfg` |
 | Meshchat state | `/flash/.meshchat.json` | `meshchat` |
+| MeshChat contacts | `/flash/.meshcontacts.json` | `/contacts` |
 | `yt` remote command (one line; may name your server) | `/flash/.yt` | edit the file |
 | Favourites, shell start-up, welcome text | `/flash/.favs.json`, `/flash/.shellrc` (also `/sd/.shellrc`), `/flash/WELCOME.md` | by hand |
 | `agent` work folder | `/flash/agent/` | the `agent` tools |

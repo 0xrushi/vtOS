@@ -635,7 +635,28 @@ def _raw_begin(radio):
     return freq
 
 
-def open_backend(env, demo=False, nick="vtOS", raw=False):
+def open_meshcore(env, radio, nick):
+    import os
+    import mcback
+    import mcmesh
+    state = mcmesh.State.load()
+    if nick and nick != "vtOS":
+        state.name = nick[:16]
+    state.ensure_identity(os.urandom)
+    ok, msg, _ = configure_radio(radio, state)
+    if not ok:
+        raise RuntimeError(msg)
+    radio.start_receive()
+    backend = mcback.MeshCoreBackend(radio, state, env, configure=configure_radio,
+                                     unix_offset=UNIX_OFFSET if time.gmtime(0)[0] == 2000 else 0)
+    try:
+        state.save()
+    except OSError:
+        pass
+    return backend
+
+
+def open_backend(env, demo=False, nick="vtOS", raw=False, meshcore=False):
     """Returns (backend, note). note is a human string when demo is a fallback."""
     if demo:
         return SimBackend(), None
@@ -644,6 +665,8 @@ def open_backend(env, demo=False, nick="vtOS", raw=False):
         if radio is None:
             radio = _make_radio(env)
             env.radio = radio
+        if meshcore:
+            return open_meshcore(env, radio, nick), None
         if raw:
             freq = _raw_begin(radio)
             return LoraBackend(radio, nick, freq, env), None

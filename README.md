@@ -134,6 +134,11 @@ Want vtOS and the RF lab (IQ tone transmitter) on one device?
 
 ## 📝 How to use
 
+### VNC over Tailscale
+Remote desktop from another machine, with the T-Deck's `vncd` server reached over your tailnet. See [docs/VNC.md](docs/VNC.md) and [docs/TAILSCALE.md](docs/TAILSCALE.md).
+
+<img src="assets/vnc-demo.gif" alt="VNC demo over Tailscale" width="240">
+
 ### Trackball Usage
 - **Short Press**: Sends `Esc`
 - **Long Press**: Sends `KeyboardInterrupt`
@@ -220,6 +225,8 @@ You can execute the following commands from the built-in shell:
 | `sftp` | SFTP Client that mounts its content as a VFS |
 | `sftpd` | SFTP Server; runs in the background |
 | `smtp` | SMTP email client; compose in `vi` and send with `smtp <host> <user> <password> [port]` |
+| `meshchat --meshcore` | MeshCore client mode of `meshchat`: contacts from `meshcore://` links, channels, direct messages with acks, repeater login (`/login`) and remote commands typed into the repeater chat. Host-tested only; see [docs/MESHCORE.md](docs/MESHCORE.md) |
+| `meshcore id\|list\|import <link>\|rm <name>\|radio ...\|name\|channel` | Manage the MeshCore identity, contacts and LoRa settings without the radio (`/flash/.meshcore.json`) |
 | `rfspec [centre_mhz [span_mhz [rbw_khz]]] [--demo]` | Sub-GHz spectrum analyzer on the LoRa chip: a live trace with peak hold plus a waterfall, pan/zoom with the trackball, selectable resolution bandwidth (62.5-500 kHz). RX only; takes the radio exclusively, so quit `meshchat` first. Defaults to your Meshtastic region's band. `--demo` shows a fake band with no radio. See [docs/RFSPEC.md](docs/RFSPEC.md) |
 | `spectrum` | Live 2.4 GHz spectrum meter; hops channels with the WiFi sniffer and shows per-channel frame counts, type split, peak RSSI and unique AP counts. RX only. Try `menu spectrum` |
 | `neofetch` | System summary: OS, uptime, CPU and temperature, heap/PSRAM, flash/SD usage, battery, network. Also in the Alt+D launcher. |
@@ -242,6 +249,10 @@ You can execute the following commands from the built-in shell:
 | `wiki` | Offline Simple English Wikipedia reader; ~170MB from SD. See `utils/wikiconvert.py` |
 | `zm` | Launches `dfrotz`, the ZMachine interpreter |
 
+**`balatro`** running on the T-Deck:
+
+<img src="assets/balatro.jpg" alt="balatro running on the T-Deck" width="320">
+
 To get out of the shell, type `exit`. This will bring you to the MicroPython shell, where you can type in python expressions. To get back to the built-in shell, type `sh` in the MicroPython shell.
 
 ### Meshtastic chat (`meshchat`)
@@ -249,6 +260,9 @@ To get out of the shell, type `exit`. This will bring you to the MicroPython she
 **Radar:** Menu > Radar (or `/radar`) shows your node in the middle and every node that has shared a position at its real bearing and distance, with a sweep line, range rings, auto or manual range (up/down) and left/right to pick a node (Enter opens its details). It needs your own position (Settings > Position, or the Plus's GPS); nodes without a position are counted, not guessed at.
 
 `meshchat` makes the T-Deck a Meshtastic node and client in one: encrypted channels, direct messages with delivery marks, relaying for the mesh, a node list, and a settings screen. Details, limits and the bring-up checklist are in [docs/MESHTASTIC.md](docs/MESHTASTIC.md). It is tested on the device (radio, transmit, retuning) but has not yet been confirmed receiving a real Meshtastic packet.
+
+<img src="assets/mesh-demo.gif" alt="meshchat demo" width="240">
+
 
 ```
 meshchat              # start the node (first run: region US, LongFast, default channel)
@@ -441,3 +455,5 @@ strips: `yt --smooth <words>` targets 256x144 at 30 fps, and
 and depend on device/network throughput; playback prints measured FPS on exit.
 Setup, protocol and limits are in
 [tools/ytstream/README.md](tools/ytstream/README.md).
+
+[▶ Video stream demo with audio](assets/video-stream-demo.mp4)

@@ -26,6 +26,28 @@ or goes back, long press quits. Type to compose, Enter sends. `/help` lists the
 slash commands (`/nodes /discover /dm /node /trace /pos /announce /fav /settings
 /channels /stats /info /clear /quit`).
 
+## Saved contacts
+
+Open **Menu > Contacts** or `/contacts`. Press **a** to add a contact manually,
+or press **c** on a selected node in `/nodes` to fill in its radio ID and name.
+`/contact` also adds the current direct-message recipient. Each entry has a
+required name and node ID, plus optional email and note. Enter edits a field;
+**Save changes** saves the entry, **View details** shows the complete note,
+and **Delete contact** asks before removing it. Leaving an edited entry asks
+whether to save or discard the changes.
+
+Select **Message** on a contact, press **m** in the contacts list, or use
+`/dm <saved name>` to open its direct-message chat. Type the message and press
+Enter to send. A saved address can be used before hearing that node in the
+current session; reaching it still depends on radio range and compatible
+settings. A contact does not add encryption keys or change DM support.
+
+Contacts are saved in `/flash/.meshcontacts.json` and included in encrypted
+settings backups. Email and notes stay on the device and are never included
+in radio messages. They are address-book fields, not an email service.
+Raw LoRa, Meshtastic, demo and MeshCore entries are kept separate. A MeshCore
+recipient must also be imported into the MeshCore backend before messaging.
+
 ## Automatic off-grid discovery
 
 While `meshchat` is open, the radio continuously listens on the configured

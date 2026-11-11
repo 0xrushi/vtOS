@@ -97,6 +97,50 @@ class _AES:
         return bytes(s)
 
 
+_INV = None
+
+
+def _inv_sbox():
+    global _INV
+    if _INV is None:
+        inv = [0] * 256
+        for i, v in enumerate(_tables()):
+            inv[v] = i
+        _INV = bytes(inv)
+    return _INV
+
+
+def _mul(a, b):
+    r = 0
+    while b:
+        if b & 1:
+            r ^= a
+        a = _xtime(a)
+        b >>= 1
+    return r
+
+
+def _decrypt_block(aes, block):
+    """AES block decryption (straight inverse cipher; used by ECB only)."""
+    inv = _inv_sbox()
+    s = [b ^ k for b, k in zip(block, aes.rk[aes.rounds])]
+    for r in range(aes.rounds - 1, -1, -1):
+        # InvShiftRows then InvSubBytes
+        s = [s[((c - row) % 4) * 4 + row] for c in range(4) for row in range(4)]
+        s = [inv[b] for b in s]
+        s = [b ^ k for b, k in zip(s, aes.rk[r])]
+        if r:
+            out = []
+            for c in range(4):
+                a0, a1, a2, a3 = s[4 * c:4 * c + 4]
+                out.append(_mul(a0, 14) ^ _mul(a1, 11) ^ _mul(a2, 13) ^ _mul(a3, 9))
+                out.append(_mul(a0, 9) ^ _mul(a1, 14) ^ _mul(a2, 11) ^ _mul(a3, 13))
+                out.append(_mul(a0, 13) ^ _mul(a1, 9) ^ _mul(a2, 14) ^ _mul(a3, 11))
+                out.append(_mul(a0, 11) ^ _mul(a1, 13) ^ _mul(a2, 9) ^ _mul(a3, 14))
+            s = out
+    return bytes(s)
+
+
 def ctr_pure(key, nonce, data):
     """AES-CTR with a 128-bit big-endian counter, pure Python."""
     aes = _AES(key)
@@ -163,3 +207,45 @@ def backend():
     if _native_ok is None:
         _native_ok = _selftest()
     return ("cryptolib-" + _native_mode) if _native_ok else "pure"
+
+
+# --- AES-ECB (MeshCore) ------------------------------------------------------
+# MeshCore encrypts with plain AES-128-ECB over zero-padded 16-byte blocks. Same
+# policy as CTR above: use cryptolib only after it agrees with the pure code.
+
+_ecb_ok = None
+
+
+def _ecb_pure(key, data, decrypt):
+    aes = _AES(key)
+    out = []
+    for off in range(0, len(data), 16):
+        blk = data[off:off + 16]
+        out.append(_decrypt_block(aes, blk) if decrypt else aes.encrypt_block(blk))
+    return b"".join(out)
+
+
+def _ecb_selftest():
+    if cryptolib is None:
+        return False
+    sample = bytes(range(48))
+    try:
+        key = bytes(range(16))
+        enc = cryptolib.aes(key, _MODE_ECB).encrypt(sample)
+        return (enc == _ecb_pure(key, sample, False)
+                and cryptolib.aes(key, _MODE_ECB).decrypt(enc) == sample)
+    except Exception:
+        return False
+
+
+def ecb(key, data, decrypt=False):
+    """AES-ECB of whole 16-byte blocks (len(data) must be a multiple of 16)."""
+    global _ecb_ok
+    if len(data) % 16:
+        raise ValueError("ECB needs whole blocks")
+    if _ecb_ok is None:
+        _ecb_ok = _ecb_selftest()
+    if _ecb_ok:
+        c = cryptolib.aes(key, _MODE_ECB)
+        return c.decrypt(data) if decrypt else c.encrypt(data)
+    return _ecb_pure(key, data, decrypt)

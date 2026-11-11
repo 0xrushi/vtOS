@@ -150,10 +150,12 @@ class SettingsMixin:
     def ask(self, title, lines, opts, cb):
         self.dialog = {"title": title, "lines": lines, "opts": opts, "sel": 0, "cb": cb}
 
-    def ask_text(self, title, value, cb, maxlen=60, hint="Enter ok   click cancel", fresh=False):
-        """Text prompt. With fresh=True the first key typed replaces the old value."""
+    def ask_text(self, title, value, cb, maxlen=60, hint="Enter ok   click cancel", fresh=False,
+                 mask=False):
+        """Text prompt. With fresh=True the first key typed replaces the old value;
+        mask=True shows stars (passwords)."""
         self.prompt = {"title": title, "value": value, "cb": cb, "max": maxlen, "hint": hint,
-                       "fresh": fresh}
+                       "fresh": fresh, "mask": mask}
 
     def key_dialog(self, k, now):
         d = self.dialog
@@ -687,6 +689,8 @@ class SettingsMixin:
         elif k == "x":
             n.ignored = not n.ignored
             self.notify("Ignoring %s" % n.name if n.ignored else "Not ignoring", DIM, now)
+        elif k == "l" and getattr(n, "needs_login", False):
+            self.mc_login(n, now)
         elif k == "t":
             self._node_action("traceroute", n, now, "Traceroute sent")
         elif k == "p":
@@ -711,6 +715,11 @@ class SettingsMixin:
         flags = ("  fav" if n.fav else "") + ("  ignored" if n.ignored else "")
         self._subheader2(out, cols, n.name[:cols - 16], flags.strip(), YELLOW)
         rows_data = [("ID", n.nid)]
+        if getattr(n, "kind_name", None):
+            rows_data.append(("Type", n.kind_name))
+        if getattr(n, "needs_login", False):
+            rows_data.append(("Login", "yes (admin)" if getattr(n, "admin", False)
+                              else ("yes" if getattr(n, "logged_in", False) else "no, press l")))
         short = getattr(n, "short_name", "")
         if short:
             rows_data.append(("Short", short))
@@ -746,7 +755,9 @@ class SettingsMixin:
                 out.append(paint(4 + i, [S(FG, " "), S(DIM, ljust(k, 10)), S(FG, v)], BG, cols))
             else:
                 out.append(paint(4 + i, [], BG, cols))
-        out.append(paint(rows, [S(DIM, " Enter msg  f fav  x ign  t trace  p pos")], BG, cols))
+        hint = " Enter msg  l login  f fav  x ign" if getattr(n, "needs_login", False) \
+            else " Enter msg  f fav  x ign  t trace  p pos"
+        out.append(paint(rows, [S(DIM, hint)], BG, cols))
 
     def my_position(self):
         c = getattr(self.backend, "config", None)
@@ -789,7 +800,7 @@ class SettingsMixin:
         p = self.prompt
         if p:
             room = cols - 3 - 1
-            shown = p["value"][-room:]
+            shown = ("*" * len(p["value"]) if p.get("mask") else p["value"])[-room:]
             out.append(paint(rows - 2, [S(ACCENT, " " + p["title"], bold=True)], BG_TAB, cols))
             out.append(paint(rows - 1, [S(ACCENT, " > ", bold=True), S(FG, shown), S(ACCENT, "_")], BG_BAR, cols))
             out.append(paint(rows, [S(DIM, " " + p["hint"])], BG, cols))

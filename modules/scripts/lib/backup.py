@@ -32,7 +32,7 @@ MAX_FILE = 262144  # skip anything bigger (a runaway log, not a setting)
 # elsewhere.
 FILES = (
     ".agent", ".clip.json", ".http.json", ".mesh.json", ".mesh.json.nodes",
-    ".meshchat.json", ".radio.json", ".trackball", ".favs.json", ".shellrc",
+    ".meshcontacts.json", ".meshchat.json", ".meshcore.json", ".radio.json", ".trackball", ".favs.json", ".shellrc",
     ".vnc", ".ssh/config", ".sshd_host_key", ".yt", ".compose.mail",
     ".view.mail", "mesh-channels.txt", ".virc",
 )
