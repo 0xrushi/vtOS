@@ -175,3 +175,54 @@ def test_terminal_input_flow(game):
     assert render(run, 40).count("\x1b[K") == 14
     handle_key(run, "b")
     assert run.phase == "play"
+
+
+def test_sort_keeps_selected_enhanced_cards_cursor_and_forced_card(game):
+    from bin.balatro import handle_key
+    run = game.Run()
+    run.start_blind()
+    run.cards = cards(game, "2H AS KC 2H")
+    run.cards[0] += 64 * game.BONUS
+    run.selected = {0, 3}
+    run.cursor = run.forced = 3
+    selected = sorted(run.cards[i] for i in run.selected)
+    for key in ("s", "r"):
+        handle_key(run, key)
+        assert sorted(run.cards[i] for i in run.selected) == selected
+        assert run.cards[run.cursor] == cards(game, "2H")[0]
+        assert run.cursor == run.forced
+        assert run.dealt == ()
+
+
+def test_pixel_table_layout_and_dealing_stay_within_display(game, monkeypatch):
+    import importlib.util
+    import sys
+    from types import SimpleNamespace
+    path = Path(__file__).resolve().parents[1] / "balatro_preview.py"
+    spec = importlib.util.spec_from_file_location("balatro_preview", path)
+    preview = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preview)
+    monkeypatch.setitem(sys.modules, "framebuf", SimpleNamespace())
+    screen, run, env = preview.setup()
+    import balatroscreen
+    monkeypatch.setattr(balatroscreen.time, "ticks_diff", lambda a, b: a - b, raising=False)
+    run.start_blind()
+    run.jokers = list(range(6))
+    run.consumables = [("tarot", 0), ("planet", "Pair")]
+    run.selected = {0, 2, 5}
+    screen.draw(run, 0)
+    for now in range(20, 800, 20):
+        if screen.animating:
+            screen.step_deal(run, now)
+    assert not screen.animating
+    assert len(screen.buf) == 4752  # Retain the small SPI scratch buffer.
+    for phase in ("tarot", "inventory", "play", "shop", "blind", "cashout", "lost"):
+        if phase == "tarot":
+            run.tarot = 0
+        if phase == "inventory":
+            run.inventory_from = "play"
+        if phase == "shop":
+            run.cash_out()
+        run.phase = phase
+        screen.draw(run)
+    assert any(env.tft.pixels)

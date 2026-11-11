@@ -167,6 +167,16 @@ def handle_key(game, key):
             game.toggle(game.cursor)
         elif len(key) == 1 and "1" <= key <= str(count):
             game.toggle(int(key) - 1)
+        elif key in ("r", "s"):
+            order = sorted(range(count), key=lambda i: (((game.cards[i] % 64) // 13,
+                           (game.cards[i] % 64) % 13) if key == "s" else
+                           ((game.cards[i] % 64) % 13, (game.cards[i] % 64) // 13)), reverse=True)
+            game.cards = [game.cards[i] for i in order]
+            game.selected = {i for i, old in enumerate(order) if old in game.selected}
+            game.cursor = order.index(game.cursor)
+            if game.forced is not None:
+                game.forced = order.index(game.forced)
+            game.dealt = ()
         elif phase == "tarot":
             if enter:
                 game.apply_tarot()
