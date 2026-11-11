@@ -190,6 +190,15 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
     def conv(self):
         return self.convs[self.cur]
 
+    def commands(self):
+        return COMMANDS + ("discover",) if hasattr(self.backend, "discover") else COMMANDS
+
+    def menu_items(self):
+        items = MENU_ITEMS
+        if hasattr(self.backend, "discover"):
+            items = items[:-1] + ("Discover nodes",) + items[-1:]
+        return items
+
     def notify(self, text, color=DIM, now=None):
         if now is None:
             now = time.time()
@@ -341,6 +350,8 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             return "quit"
         if cmd == "nodes":
             self._open_list("nodes")
+        elif cmd == "discover":
+            self.discover(now)
         elif cmd == "radar":
             self.radar_open()
         elif cmd == "chats":
@@ -398,6 +409,15 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             self.notify("Unknown command: /%s" % cmd[:16], RED, now)
         return None
 
+    def discover(self, now):
+        fn = getattr(self.backend, "discover", None)
+        if fn is None:
+            self.notify("Discovery unavailable in this mode", YELLOW, now)
+            return
+        ok, msg = fn()
+        self._open_list("nodes")
+        self.notify(msg, GREEN if ok else YELLOW, now)
+
     def find_node(self, name):
         q = name.lower()
         for test in (lambda n: n.lower() == q,
@@ -420,7 +440,9 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
         self.mode = "page"
         self.page_scroll = 0
         if which == "help":
-            lines = [[S(ACCENT, "%-11s" % k, bold=True), S(FG, v)] for k, v in HELP_LINES]
+            extra = (("/discover", "ask nearby nodes for names"),) if hasattr(self.backend, "discover") else ()
+            lines = [[S(ACCENT, "%-11s" % k, bold=True), S(FG, v)]
+                     for k, v in HELP_LINES + extra]
             self.page = ("Help", lines)
             return
         if which == "stats":
@@ -452,7 +474,8 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
         self.page = ("Stats", lines)
 
     def _key_menu(self, k, now):
-        n = len(MENU_ITEMS)
+        items = self.menu_items()
+        n = len(items)
         if k == "ESC":
             self.mode = "chat"
         elif k == "UP":
@@ -460,11 +483,13 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
         elif k == "DOWN":
             self.sel = (self.sel + 1) % n
         elif k in ("\r", "\n"):
-            item = MENU_ITEMS[self.sel]
+            item = items[self.sel]
             if item == "Quit":
                 return "quit"
             if item == "Nodes":
                 self._open_list("nodes")
+            elif item == "Discover nodes":
+                self.discover(now)
             elif item == "Radar":
                 self.radar_open()
             elif item == "Chats":
@@ -490,6 +515,8 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             self.sel = (self.sel - 1) % n
         elif k == "DOWN" and n:
             self.sel = (self.sel + 1) % n
+        elif self.mode == "nodes" and k == "d":
+            self.discover(now)
         elif k in ("\r", "\n") and n:
             if self.mode == "nodes":
                 self._open_dm(items[self.sel])
@@ -611,7 +638,7 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             return [S(self.notice[1], " " + self.notice[0])]
         if self.input.startswith("/") and " " not in self.input:
             word = self.input[1:]
-            hits = ["/" + c for c in COMMANDS if c.startswith(word)]
+            hits = ["/" + c for c in self.commands() if c.startswith(word)]
             return [S(ACCENT, " " + (" ".join(hits) if hits else "no such command"))]
         return [S(DIM, " click menu  < > chats  /help")]
 
@@ -673,14 +700,15 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
         return paint(row, segs + [S(FG, " " * gap)] + extra, BG_BAR, cols)
 
     def _render_menu(self, out, cols, rows):
+        items = self.menu_items()
         w = min(cols - 2, 18)
         left = (cols - w) // 2 + 1
-        top = max(2, (rows - (len(MENU_ITEMS) + 2)) // 2)
+        top = max(1, (rows - (len(items) + 2)) // 2)
         inner = w - 2
         title = "─ Menu "
         out.append(paint(top, [S(DIM, "┌" + title + "─" * (inner - len(title)) + "┐")],
                          BG_BAR, cols, left_col=left, width=w))
-        for i, item in enumerate(MENU_ITEMS):
+        for i, item in enumerate(items):
             sel = i == self.sel
             body = ("> " if sel else "  ") + item
             out.append(paint(top + 1 + i,
@@ -688,7 +716,7 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
                               S(ACCENT if sel else FG, " " + ljust(body, inner - 1), bold=sel),
                               S(DIM, "│")],
                              BG_BAR, cols, left_col=left, width=w))
-        out.append(paint(top + 1 + len(MENU_ITEMS),
+        out.append(paint(top + 1 + len(items),
                          [S(DIM, "└" + "─" * inner + "┘")],
                          BG_BAR, cols, left_col=left, width=w))
 
@@ -718,7 +746,8 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
             if idx >= len(items):
                 msg = []
                 if i == 0 and not items:
-                    msg = [S(DIM, " Nothing here yet.")]
+                    msg = [S(DIM, " Listening for nodes..." if nodes and hasattr(self.backend, "discover")
+                             else " Nothing here yet.")]
                 out.append(paint(row, msg, BG, cols))
                 continue
             sel = idx == self.sel
@@ -726,6 +755,8 @@ class App(meshset.SettingsMixin, meshradar.RadarMixin):
                 else self._chat_row(self.convs[items[idx]], sel, cols)
             out.append(paint(row, segs, BG_SEL if sel else BG, cols))
         hint = " Enter dm  i info  f fav  x ignore" if nodes else " Enter open  click back"
+        if nodes and hasattr(self.backend, "discover"):
+            hint = " Enter dm  i info  d discover"
         out.append(paint(rows, [S(DIM, hint)], BG, cols))
 
     def _node_row(self, n, sel, cols, now):

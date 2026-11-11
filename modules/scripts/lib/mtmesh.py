@@ -26,6 +26,7 @@ SEEN_MAX = 256
 MAX_NODES = 100
 REBROADCAST_ROLES = ("CLIENT", "ROUTER", "ROUTER_CLIENT", "REPEATER", "CLIENT_HIDDEN")
 NODEINFO_REPLY_GAP = 60.0
+DISCOVERY_GAP = 60.0
 FIRST_ANNOUNCE = 15.0
 CAD_TRIES = 6
 
@@ -122,6 +123,7 @@ class Mesh:
         self._next = {"nodeinfo": self.started + FIRST_ANNOUNCE if cfg.nodeinfo_interval else None,
                       "position": None, "telemetry": None}
         self._reply_gap = {}
+        self._last_discovery = None
         self.events = []
         self.reconfigure()
 
@@ -407,6 +409,20 @@ class Mesh:
         return self._send_data(to, P.PORT_NODEINFO, user, channel,
                                want_response=want_response)
 
+    def discover(self):
+        """Ask the primary mesh for names, without sending a chat message."""
+        if not self.cfg.tx_enabled:
+            raise ValueError("Discovery needs TX enabled; still listening")
+        now = self.clock()
+        if self._last_discovery is not None and now - self._last_discovery < DISCOVERY_GAP:
+            raise ValueError("Discovery cooldown: wait %ds" %
+                             (int(DISCOVERY_GAP - (now - self._last_discovery)) + 1))
+        pid = self.send_nodeinfo(want_response=True)
+        self._last_discovery = now
+        iv = self.cfg.nodeinfo_interval
+        self._next["nodeinfo"] = now + iv if iv else None
+        return pid
+
     def send_position(self, to=P.BROADCAST, channel=0):
         fix = self._position()
         if fix is None:
@@ -556,7 +572,10 @@ class Mesh:
         if nxt["nodeinfo"] is not None and now >= nxt["nodeinfo"]:
             iv = self.cfg.nodeinfo_interval
             nxt["nodeinfo"] = now + iv if iv else None
-            self.send_nodeinfo(want_response=False)
+            if self._last_discovery is None:
+                self.discover()
+            else:
+                self.send_nodeinfo(want_response=False)
         if nxt["position"] is not None and now >= nxt["position"]:
             nxt["position"] = now + self.cfg.pos_interval
             self.send_position()

@@ -121,6 +121,9 @@ class SimBackend:
     def announce(self):
         return True, "Name announced (demo)"
 
+    def discover(self):
+        return True, "Demo nodes only (no radio)"
+
     def _later(self, secs, *ev):
         self._due.append((self._clock() + secs, ev))
 
@@ -469,6 +472,13 @@ class MeshtasticBackend:
     def announce(self):
         self.mesh.send_nodeinfo()
         return True, "Name announced"
+
+    def discover(self):
+        try:
+            self.mesh.discover()
+        except ValueError as e:
+            return False, str(e)
+        return True, "Discovery queued; listening on %s" % self.config.channel_name(0)
 
     def my_position(self):
         fix = self.mesh._position()

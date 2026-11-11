@@ -82,6 +82,27 @@ def test_history_and_dm_unread_on_start(rig):
     assert "Bob 1" in screen(app, clock)[1]
 
 
+def test_discover_opens_nodes_from_command_menu_and_shortcut(rig):
+    app, clock = rig
+    type_text(app, clock, "/discover")
+    app.key("\r", clock.t)
+    assert app.mode == "nodes" and "Demo" in app.notice[0]
+    app.key("d", clock.t)
+    assert app.mode == "nodes" and "Demo" in app.notice[0]
+    app.mode = "menu"
+    app.sel = app.menu_items().index("Discover nodes")
+    app.key("\r", clock.t)
+    assert app.mode == "nodes"
+    for cols, rows in SIZES:
+        screen(app, clock, cols, rows)
+
+
+def test_discovery_controls_hidden_for_raw_mode():
+    app = meshui.App(meshback.LoraBackend(FakeRadio(), "test"), T0)
+    assert "Discover nodes" not in app.menu_items()
+    assert "discover" not in app.commands()
+
+
 def test_send_ack_and_fail_markers(rig):
     app, clock = rig
     for i in range(4):
@@ -165,7 +186,7 @@ def test_menu_and_back_navigation(rig):
     app.key("ESC", clock.t)
     assert app.mode == "chat"
     app.key("ESC", clock.t)
-    for _ in range(len(meshui.MENU_ITEMS) - 1):
+    for _ in range(len(app.menu_items()) - 1):
         app.key("DOWN", clock.t)
     assert app.key("\r", clock.t) == "quit"
 

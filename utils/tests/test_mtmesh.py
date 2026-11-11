@@ -352,6 +352,50 @@ def test_periodic_nodeinfo_announcement():
     air.hears("alice", "bob")
     run({"alice": a, "bob": b}, clock, 30)
     assert b.nodes[1].long_name == "alice"
+    assert a.nodes[2].long_name == "bob"    # startup requests a reply
+
+
+def test_discovery_is_nodeinfo_only_and_defers_startup_announcement(pair):
+    air, clock, nodes = pair
+    a = nodes["alice"]
+    a.cfg.nodeinfo_interval = 3600
+    a._next["nodeinfo"] = clock() + mtmesh.FIRST_ANNOUNCE
+    pid = a.discover()
+    ev = run(nodes, clock, 30)
+    assert a.nodes[0xB2].long_name == "bob"
+    assert not kinds(ev["alice"], "text") and not kinds(ev["bob"], "text")
+    sent = [raw for name, raw in air.log if name == "alice"
+            and P.unpack_header(raw)["from"] == a.me]
+    assert len(sent) == 1
+    h = P.unpack_header(sent[0])
+    data = P.open_data(h, sent[0][P.HDR_LEN:], a.cfg.key(0))
+    assert h["id"] == pid and h["to"] == P.BROADCAST
+    assert data["portnum"] == P.PORT_NODEINFO and data["want_response"]
+    with pytest.raises(ValueError, match="cooldown"):
+        a.discover()
+    clock.t += mtmesh.DISCOVERY_GAP
+    assert a.discover() != pid
+
+
+def test_later_announcements_do_not_request_more_replies():
+    air, clock = Air(), Clock()
+    a = make_node(air, clock, "alice", 1, nodeinfo_interval=60)
+    run({"alice": a}, clock, 90)
+    data = [P.open_data(P.unpack_header(raw), raw[P.HDR_LEN:], a.cfg.key(0))
+            for _, raw in air.log]
+    assert [d["want_response"] for d in data] == [True, False]
+
+
+def test_rx_only_discovery_still_learns_nodes(pair):
+    air, clock, nodes = pair
+    a = nodes["alice"]
+    a.cfg.tx_enabled = False
+    with pytest.raises(ValueError, match="TX enabled"):
+        a.discover()
+    nodes["bob"].send_nodeinfo()
+    run(nodes, clock, 5)
+    assert a.nodes[0xB2].long_name == "bob"
+    assert a.radio.sent == 0 and a._last_discovery is None
 
 
 def test_node_database_round_trip(pair):

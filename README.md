@@ -269,6 +269,8 @@ meshchat --raw        # plain "nick: text" LoRa, like lorachat (not Meshtastic)
 
 Delivery marks after your messages: `...` queued, `sent` on air, `ok` acknowledged, `!` failed. Slash commands: `/nodes`, `/dm name`, `/node name`, `/trace name`, `/pos`, `/announce`, `/fav name`, `/settings`, `/channels`, `/stats`, `/info`, `/clear`, `/help`, `/quit`.
 
+**Automatic discovery:** MeshChat listens continuously and asks for NodeInfo replies with its first announcement (about 15 seconds after launch, if announcements are enabled). **Menu > Discover nodes**, `/discover`, or **d** in Nodes requests replies again and shows the live list, with a 60-second cooldown. Uses your configured primary channel (LongFast/public key on first run); nearby nodes must match your radio and channel settings. See [off-grid discovery](docs/MESHTASTIC.md#automatic-off-grid-discovery).
+
 **Settings:** click, choose **Settings**, press Enter (or type `/settings`).
 
 1. Pick a section with up/down and press Enter: Radio, Channels, Device, Position, Telemetry, Advanced.

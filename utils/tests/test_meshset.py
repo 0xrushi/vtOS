@@ -462,6 +462,28 @@ def test_configure_radio_fails_cleanly_when_nothing_works():
     assert not ok and "-706" in msg
 
 
+def test_backend_discovery_uses_saved_channel_and_reports_cooldown(tmp_path):
+    backend, radio, clock = make_backend(tmp_path)
+    backend.config.channels[0] = mtconfig.Channel("Private", bytes(range(16)))
+    app = meshui.App(backend, clock())
+    typed(app, clock, "/discover")
+    app.key(E, clock.t)
+    assert app.mode == "nodes" and "queued" in app.notice[0]
+    assert "Private" in app.notice[0]
+    app.poll(clock())
+    raw = radio.sent[0]
+    h = P.unpack_header(raw)
+    data = P.open_data(h, raw[P.HDR_LEN:], backend.config.key(0))
+    assert data["portnum"] == P.PORT_NODEINFO and data["want_response"]
+    assert h["channel"] == backend.config.chan_hash(0)
+    assert backend.discover()[0] is False
+    assert len(backend.mesh.txq) == 0
+    clock.t += 61
+    backend.config.tx_enabled = False
+    ok, msg = backend.discover()
+    assert not ok and "TX enabled" in msg
+
+
 def test_backend_sends_encrypted_text_visible_to_a_second_node(tmp_path):
     backend, radio, clock = make_backend(tmp_path)
     mid = backend.send("ch:0", "hello mesh")

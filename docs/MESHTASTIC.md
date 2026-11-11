@@ -23,8 +23,29 @@ meshchat --raw        # old lorachat-style "nick: text" over LoRa (no Meshtastic
 
 Keys: trackball left/right switch chats, up/down scroll, click opens the menu
 or goes back, long press quits. Type to compose, Enter sends. `/help` lists the
-slash commands (`/nodes /dm /node /trace /pos /announce /fav /settings
+slash commands (`/nodes /discover /dm /node /trace /pos /announce /fav /settings
 /channels /stats /info /clear /quit`).
+
+## Automatic off-grid discovery
+
+While `meshchat` is open, the radio continuously listens on the configured
+frequency and adds senders of decoded packets to **Menu > Nodes**. Names fill
+in when NodeInfo arrives. With announcements enabled, the first announcement
+after about 15 seconds asks other nodes to reply; later periodic announcements
+share your name without requesting replies.
+
+Use **Menu > Discover nodes**, `/discover`, or **d** in the Nodes list to request
+NodeInfo replies again. This queues one NodeInfo broadcast on your primary
+channel and opens the live list; it sends no chat message or position. Repeat
+requests have a 60-second cooldown. TX disabled or announcements disabled
+still allows passive reception (with announcements disabled, discovery is manual).
+
+First-run settings are US / LongFast with the public default key. Discovery
+uses your saved settings, so match the other nodes' region, modem, frequency
+slot and channel key. It does not scan other frequencies or replace private
+channels. Nodes may suppress replies, and an empty list means nothing has been
+decoded yet, not that no nodes exist. Try an outdoor or elevated location and
+leave the app listening. `--demo` shows simulated nodes; `--raw` uses a different protocol and does not offer this Meshtastic discovery action.
 
 ## What it does
 
